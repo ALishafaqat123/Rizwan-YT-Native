@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -20,6 +22,7 @@ import android.widget.Toast;
 import com.yausername.ffmpeg.FFmpeg;
 import com.yausername.youtubedl_android.YoutubeDL;
 import com.yausername.youtubedl_android.YoutubeDLRequest;
+import com.yausername.youtubedl_android.YoutubeDLResponse;
 
 import java.io.File;
 import java.util.Locale;
@@ -31,6 +34,8 @@ import kotlin.Unit;
 import kotlin.jvm.functions.Function3;
 
 public class MainActivity extends Activity {
+    private static final String FINAL_MARKER = "__RMS_FINAL__";
+
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private EditText urlInput;
     private TextView status;
@@ -72,7 +77,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("v1.6.0 · 360p / 720p / 1080p · Android 8.1 test");
+        sub.setText("v1.6.1 · HD audio merge + verification · Android 8.1 test");
         sub.setTextColor(Color.rgb(155, 166, 181));
         sub.setTextSize(14);
         sub.setPadding(0, dp(8), 0, dp(24));
@@ -151,8 +156,8 @@ public class MainActivity extends Activity {
         root.addView(status);
 
         TextView note = new TextView(this);
-        note.setText("360p keeps the proven single-file audio-compatible path from v1.5.9. " +
-                "720p and 1080p prefer the requested HD MP4/H.264 video plus M4A/AAC audio, then FFmpeg merges them into one MP4.");
+        note.setText("360p keeps the proven v1.5.9 path. 720p and 1080p now require a separate audio stream, " +
+                "merge with bundled FFmpeg, and verify that the final MP4 really contains an audio track before success is shown.");
         note.setTextColor(Color.rgb(132, 143, 157));
         note.setTextSize(13);
         root.addView(note);
@@ -253,6 +258,7 @@ public class MainActivity extends Activity {
                 request.addOption("--no-playlist");
                 request.addOption("--no-mtime");
                 request.addOption("--newline");
+                request.addOption("--progress");
                 request.addOption("--continue");
                 request.addOption("--force-ipv4");
                 request.addOption("--remote-components", "ejs:github");
@@ -261,18 +267,34 @@ public class MainActivity extends Activity {
                         "youtube:player_client=default,-android_sdkless;formats=missing_pot");
                 request.addOption("-f", formatSelectorFor(quality));
                 request.addOption("--merge-output-format", "mp4");
+
+                if (quality > 360) {
+                    request.addOption("--postprocessor-args",
+                            "Merger+ffmpeg_o:-c:v copy -c:a aac -b:a 192k");
+                }
+
+                request.addOption("--print", "after_move:" + FINAL_MARKER + "%(filepath)s");
                 request.addOption("-o", new File(outDir,
-                        "%(title).180B [%(id)s].%(ext)s").getAbsolutePath());
+                        "%(title).160B [%(id)s] [" + quality + "p].%(ext)s").getAbsolutePath());
 
                 Function3<Float, Long, String, Unit> callback = (pct, eta, line) -> {
                     int p = Math.max(0, Math.min(100, Math.round(pct)));
                     String safeLine = line == null ? "" : line;
                     String lower = safeLine.toLowerCase(Locale.US);
-                    boolean resuming = lower.contains("resuming download") || lower.contains("resume at") || lower.contains("continuing at");
+                    boolean resuming = lower.contains("resuming download") ||
+                            lower.contains("resume at") || lower.contains("continuing at");
+                    boolean merging = lower.contains("[merger]") || lower.contains("merging formats");
                     runOnUiThread(() -> {
                         progress.setProgress(p);
                         String etaText = eta != null && eta >= 0 ? (" · ETA " + eta + "s") : "";
-                        String phase = resuming ? "Resuming previous download..." : "Downloading " + quality + "p video + audio...";
+                        String phase;
+                        if (merging) {
+                            phase = "Merging video + audio...";
+                        } else if (resuming) {
+                            phase = "Resuming previous download...";
+                        } else {
+                            phase = "Downloading " + quality + "p video + audio...";
+                        }
                         setStatus(String.format(Locale.US,
                                 "%s %d%%%s\n%s",
                                 phase, p, etaText, safeLine));
@@ -280,23 +302,38 @@ public class MainActivity extends Activity {
                     return Unit.INSTANCE;
                 };
 
-                YoutubeDL.getInstance().execute(request, activeProcess, callback);
+                YoutubeDLResponse response = YoutubeDL.getInstance().execute(request, activeProcess, callback);
+                String finalPath = extractFinalPath(response.getOut());
 
+                if (quality > 360) {
+                    runOnUiThread(() -> setStatus("Download finished. Verifying final MP4 audio track..."));
+                    if (finalPath == null || finalPath.trim().isEmpty()) {
+                        throw new Exception("HD verification failed: final file path was not reported.");
+                    }
+                    File finalFile = new File(finalPath);
+                    if (!finalFile.isFile()) {
+                        throw new Exception("HD verification failed: final MP4 was not found.");
+                    }
+                    if (!hasAudioTrack(finalPath)) {
+                        if (finalFile.exists()) finalFile.delete();
+                        throw new Exception("HD verification failed: final MP4 has no audio track.");
+                    }
+                }
+
+                final String savedPath = finalPath;
                 runOnUiThread(() -> {
                     progress.setProgress(100);
-                    setStatus("DOWNLOAD COMPLETE\n" + quality + "p video + audio\nSaved in Movies / Rizwan Media Saver");
-                    downloadButton.setEnabled(true);
-                    cancelButton.setEnabled(false);
-                    setQualityButtonsEnabled(true);
-                    processId = null;
+                    String verified = quality > 360 ? "\nAudio track VERIFIED" : "";
+                    String where = savedPath != null && !savedPath.trim().isEmpty()
+                            ? "\n" + savedPath
+                            : "\nSaved in Movies / Rizwan Media Saver";
+                    setStatus("DOWNLOAD COMPLETE\n" + quality + "p video + audio" + verified + where);
+                    restoreIdleUi();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     setStatus("DOWNLOAD FAILED\n" + safeMessage(e));
-                    downloadButton.setEnabled(true);
-                    cancelButton.setEnabled(false);
-                    setQualityButtonsEnabled(true);
-                    processId = null;
+                    restoreIdleUi();
                 });
             }
         });
@@ -313,21 +350,51 @@ public class MainActivity extends Activity {
                     "best[height<=360][vcodec!=none][acodec!=none]/best";
         }
 
+        // HD is deliberately strict: every valid branch contains both video AND audio.
+        // There is no video-only or plain "best" fallback in v1.6.1.
         String q = String.valueOf(quality);
-        String mergedHd =
-                "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/" +
+        return "bestvideo[height=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/" +
+                "bestvideo[height=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio/" +
                 "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/" +
-                "bestvideo[height<=" + q + "][ext=mp4]+bestaudio[ext=m4a]/";
+                "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio/" +
+                "bestvideo[height<=" + q + "][ext=mp4]+bestaudio[ext=m4a]/" +
+                "bestvideo[height<=" + q + "][ext=mp4]+bestaudio";
+    }
 
-        if (quality == 720) {
-            return "22/" + mergedHd +
-                    "best[height<=720][ext=mp4][vcodec!=none][acodec!=none]/" +
-                    "best[height<=720][vcodec!=none][acodec!=none]/best";
+    private String extractFinalPath(String out) {
+        if (out == null) return null;
+        String[] lines = out.split("\\r?\\n");
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.startsWith(FINAL_MARKER)) {
+                return t.substring(FINAL_MARKER.length()).trim();
+            }
         }
+        return null;
+    }
 
-        return mergedHd +
-                "best[height<=" + q + "][ext=mp4][vcodec!=none][acodec!=none]/" +
-                "best[height<=" + q + "][vcodec!=none][acodec!=none]/best";
+    private boolean hasAudioTrack(String path) throws Exception {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(path);
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.getString(MediaFormat.KEY_MIME);
+                if (mime != null && mime.startsWith("audio/")) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            extractor.release();
+        }
+    }
+
+    private void restoreIdleUi() {
+        downloadButton.setEnabled(true);
+        cancelButton.setEnabled(false);
+        setQualityButtonsEnabled(true);
+        processId = null;
     }
 
     private void cancelDownload() {
@@ -359,7 +426,8 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 701 && (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED)) {
+        if (requestCode == 701 && (grantResults.length == 0 ||
+                grantResults[0] != PackageManager.PERMISSION_GRANTED)) {
             setStatus("Storage permission is required to save the test video in Movies.");
         }
     }

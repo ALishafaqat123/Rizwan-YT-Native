@@ -38,31 +38,47 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build signed release APK
+      - name: Build unsigned release APK
         shell: bash
         run: gradle --no-daemon --stacktrace clean assembleRelease
 
-      - name: Verify APK signature and alignment
+      - name: Align and explicitly sign APK with v1 and v2
         shell: bash
         run: |
-          APK="app/build/outputs/apk/release/app-release.apk"
-          test -f "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
-          grep -q "Verified using v1 scheme (JAR signing): true" apk-signature-verification.txt
-          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apk-signature-verification.txt
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee apk-badging.txt
-
-      - name: Prepare APK artifact
-        shell: bash
-        run: |
+          set -euo pipefail
           mkdir -p artifacts
-          cp app/build/outputs/apk/release/app-release.apk artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk
-          cp apk-signature-verification.txt artifacts/SIGNATURE-VERIFICATION.txt
-          cp apk-badging.txt artifacts/APK-BADGING.txt
-          sha256sum artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk | tee artifacts/SHA256.txt
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          ALIGNED="artifacts/Rizwan-YT-Native-v1.5.8-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk"
+          test -f "$UNSIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks app/rizwan-test-signing.keystore \
+            --ks-key-alias rizwan_test \
+            --ks-pass pass:RizwanTest2026 \
+            --key-pass pass:RizwanTest2026 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled false \
+            --out "$FINAL" \
+            "$ALIGNED"
+          rm -f "$ALIGNED"
 
-      - name: Upload APK
+      - name: Verify APK signature, alignment and Android metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee artifacts/SIGNATURE-VERIFICATION.txt
+          grep -q "Verified using v1 scheme (JAR signing): true" artifacts/SIGNATURE-VERIFICATION.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-VERIFICATION.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
+          grep -q "package: name='com.rizwan.ytnative'" artifacts/APK-BADGING.txt
+          grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
+          sha256sum "$APK" | tee artifacts/SHA256.txt
+
+      - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
           name: Rizwan-YT-Native-v1.5.8-Verified-APK

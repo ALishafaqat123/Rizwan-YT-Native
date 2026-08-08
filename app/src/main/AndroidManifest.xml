@@ -7,7 +7,7 @@
     <application
         android:allowBackup="false"
         android:extractNativeLibs="true"
-        android:label="Rizwan YT Native"
+        android:label="Rizwan Media Saver"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"

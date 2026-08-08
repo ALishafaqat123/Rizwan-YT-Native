@@ -152,7 +152,7 @@ public class MainActivity extends Activity {
 
         TextView note = new TextView(this);
         note.setText("360p keeps the proven single-file audio-compatible path from v1.5.9. " +
-                "720p and 1080p use MP4 video + M4A/AAC audio and bundled FFmpeg merges them into one MP4.");
+                "720p and 1080p prefer the requested HD MP4/H.264 video plus M4A/AAC audio, then FFmpeg merges them into one MP4.");
         note.setTextColor(Color.rgb(132, 143, 157));
         note.setTextSize(13);
         root.addView(note);
@@ -314,14 +314,19 @@ public class MainActivity extends Activity {
         }
 
         String q = String.valueOf(quality);
-        String progressive = quality == 720 ?
-                "22/best[height<=720][ext=mp4][vcodec!=none][acodec!=none]/" :
-                "best[height<=" + q + "][ext=mp4][vcodec!=none][acodec!=none]/";
-
-        return progressive +
+        String mergedHd =
                 "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/" +
                 "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/" +
-                "bestvideo[height<=" + q + "][ext=mp4]+bestaudio[ext=m4a]/" +
+                "bestvideo[height<=" + q + "][ext=mp4]+bestaudio[ext=m4a]/";
+
+        if (quality == 720) {
+            return "22/" + mergedHd +
+                    "best[height<=720][ext=mp4][vcodec!=none][acodec!=none]/" +
+                    "best[height<=720][vcodec!=none][acodec!=none]/best";
+        }
+
+        return mergedHd +
+                "best[height<=" + q + "][ext=mp4][vcodec!=none][acodec!=none]/" +
                 "best[height<=" + q + "][vcodec!=none][acodec!=none]/best";
     }
 

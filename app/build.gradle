@@ -10,8 +10,8 @@ android {
         applicationId 'com.rizwan.ytnative'
         minSdk 24
         targetSdk 27
-        versionCode 162
-        versionName '1.6.2-manual-hd-merge'
+        versionCode 163
+        versionName '1.6.3-android-mediamuxer'
 
         ndk {
             abiFilters 'arm64-v8a'

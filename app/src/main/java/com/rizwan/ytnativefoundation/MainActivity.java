@@ -37,8 +37,12 @@ public class MainActivity extends Activity {
     private ProgressBar progress;
     private Button downloadButton;
     private Button cancelButton;
+    private Button quality360;
+    private Button quality720;
+    private Button quality1080;
     private volatile boolean engineReady = false;
     private volatile String processId = null;
+    private volatile int selectedQuality = 360;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,7 +72,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("v1.5.9 · 360p video + AAC audio · Android 8.1 test");
+        sub.setText("v1.6.0 · 360p / 720p / 1080p · Android 8.1 test");
         sub.setTextColor(Color.rgb(155, 166, 181));
         sub.setTextSize(14);
         sub.setPadding(0, dp(8), 0, dp(24));
@@ -85,6 +89,32 @@ public class MainActivity extends Activity {
         urlInput.setPadding(dp(14), dp(14), dp(14), dp(14));
         root.addView(urlInput, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView qualityLabel = new TextView(this);
+        qualityLabel.setText("Choose quality");
+        qualityLabel.setTextColor(Color.WHITE);
+        qualityLabel.setTextSize(16);
+        qualityLabel.setPadding(0, dp(20), 0, dp(8));
+        root.addView(qualityLabel);
+
+        LinearLayout qualityRow = new LinearLayout(this);
+        qualityRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(qualityRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        quality360 = new Button(this);
+        quality720 = new Button(this);
+        quality1080 = new Button(this);
+        quality360.setOnClickListener(v -> selectQuality(360));
+        quality720.setOnClickListener(v -> selectQuality(720));
+        quality1080.setOnClickListener(v -> selectQuality(1080));
+
+        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        qualityRow.addView(quality360, qp);
+        qualityRow.addView(quality720, qp);
+        qualityRow.addView(quality1080, qp);
+        updateQualityButtons();
 
         downloadButton = new Button(this);
         downloadButton.setText("Download 360p with audio");
@@ -113,7 +143,7 @@ public class MainActivity extends Activity {
         root.addView(progress, pp);
 
         status = new TextView(this);
-        status.setText("Preparing native engine…");
+        status.setText("Preparing native engine...");
         status.setTextColor(Color.rgb(210, 218, 229));
         status.setTextSize(15);
         status.setPadding(0, dp(18), 0, dp(12));
@@ -121,8 +151,8 @@ public class MainActivity extends Activity {
         root.addView(status);
 
         TextView note = new TextView(this);
-        note.setText("This build prefers YouTube progressive MP4 formats that already contain both H.264 video and AAC audio. " +
-                "If a single-file format is unavailable, it falls back to separate MP4 video + M4A audio and merges them with FFmpeg.");
+        note.setText("360p keeps the proven single-file audio-compatible path from v1.5.9. " +
+                "720p and 1080p use MP4 video + M4A/AAC audio and bundled FFmpeg merges them into one MP4.");
         note.setTextColor(Color.rgb(132, 143, 157));
         note.setTextSize(13);
         root.addView(note);
@@ -130,8 +160,30 @@ public class MainActivity extends Activity {
         setContentView(scroll);
     }
 
+    private void selectQuality(int quality) {
+        if (processId != null) return;
+        selectedQuality = quality;
+        updateQualityButtons();
+        if (downloadButton != null) {
+            downloadButton.setText("Download " + quality + "p with audio");
+        }
+    }
+
+    private void updateQualityButtons() {
+        if (quality360 == null) return;
+        quality360.setText(selectedQuality == 360 ? "360p\nSELECTED" : "360p");
+        quality720.setText(selectedQuality == 720 ? "720p\nSELECTED" : "720p");
+        quality1080.setText(selectedQuality == 1080 ? "1080p\nSELECTED" : "1080p");
+    }
+
+    private void setQualityButtonsEnabled(boolean enabled) {
+        quality360.setEnabled(enabled);
+        quality720.setEnabled(enabled);
+        quality1080.setEnabled(enabled);
+    }
+
     private void initEngine() {
-        setStatus("Initializing Python/yt-dlp + FFmpeg…");
+        setStatus("Initializing Python/yt-dlp + FFmpeg...");
         executor.execute(() -> {
             String updateNote;
             try {
@@ -140,7 +192,7 @@ public class MainActivity extends Activity {
 
                 String before = YoutubeDL.getInstance().versionName(getApplicationContext());
                 try {
-                    runOnUiThread(() -> setStatus("Native engine loaded. Updating yt-dlp to latest nightly…"));
+                    runOnUiThread(() -> setStatus("Native engine loaded. Updating yt-dlp to latest nightly..."));
                     YoutubeDL.UpdateStatus updateStatus = YoutubeDL.getInstance().updateYoutubeDL(
                             getApplicationContext(), YoutubeDL.UpdateChannel._NIGHTLY);
                     String after = YoutubeDL.getInstance().versionName(getApplicationContext());
@@ -158,7 +210,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     downloadButton.setEnabled(true);
                     setStatus("Native engine READY\n" + readyText +
-                            "\nPaste the YouTube link and tap Download 360p with audio.");
+                            "\nChoose 360p, 720p or 1080p and start download.");
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> setStatus("ENGINE INIT FAILED\n" + safeMessage(e)));
@@ -168,6 +220,7 @@ public class MainActivity extends Activity {
 
     private void startDownload() {
         String url = urlInput.getText().toString().trim();
+        final int quality = selectedQuality;
         if (!engineReady) {
             Toast.makeText(this, "Native engine is not ready yet", Toast.LENGTH_SHORT).show();
             return;
@@ -190,8 +243,9 @@ public class MainActivity extends Activity {
         final String activeProcess = processId;
         downloadButton.setEnabled(false);
         cancelButton.setEnabled(true);
+        setQualityButtonsEnabled(false);
         progress.setProgress(0);
-        setStatus("Resolving a 360p format with playable audio…");
+        setStatus("Resolving " + quality + "p video + playable audio...");
 
         executor.execute(() -> {
             try {
@@ -199,35 +253,29 @@ public class MainActivity extends Activity {
                 request.addOption("--no-playlist");
                 request.addOption("--no-mtime");
                 request.addOption("--newline");
+                request.addOption("--continue");
                 request.addOption("--force-ipv4");
                 request.addOption("--remote-components", "ejs:github");
                 request.addOption("--js-runtimes", "quickjs");
                 request.addOption("--extractor-args",
                         "youtube:player_client=default,-android_sdkless;formats=missing_pot");
-
-                // Android 8.1 compatibility order:
-                // 1) YouTube format 18 = progressive 360p MP4 with H.264 + AAC audio.
-                // 2) Other progressive MP4 formats that already contain video + audio.
-                // 3) Separate H.264/MP4 video + AAC/M4A audio, merged by bundled FFmpeg.
-                request.addOption("-f",
-                        "18/" +
-                        "best[height<=360][ext=mp4][vcodec^=avc1][acodec^=mp4a]/" +
-                        "best[height<=360][ext=mp4][vcodec!=none][acodec!=none]/" +
-                        "bestvideo[height<=360][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/" +
-                        "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/" +
-                        "best[height<=360][vcodec!=none][acodec!=none]/best");
+                request.addOption("-f", formatSelectorFor(quality));
                 request.addOption("--merge-output-format", "mp4");
                 request.addOption("-o", new File(outDir,
                         "%(title).180B [%(id)s].%(ext)s").getAbsolutePath());
 
                 Function3<Float, Long, String, Unit> callback = (pct, eta, line) -> {
                     int p = Math.max(0, Math.min(100, Math.round(pct)));
+                    String safeLine = line == null ? "" : line;
+                    String lower = safeLine.toLowerCase(Locale.US);
+                    boolean resuming = lower.contains("resuming download") || lower.contains("resume at") || lower.contains("continuing at");
                     runOnUiThread(() -> {
                         progress.setProgress(p);
                         String etaText = eta != null && eta >= 0 ? (" · ETA " + eta + "s") : "";
+                        String phase = resuming ? "Resuming previous download..." : "Downloading " + quality + "p video + audio...";
                         setStatus(String.format(Locale.US,
-                                "Downloading video + audio… %d%%%s\n%s",
-                                p, etaText, line == null ? "" : line));
+                                "%s %d%%%s\n%s",
+                                phase, p, etaText, safeLine));
                     });
                     return Unit.INSTANCE;
                 };
@@ -236,9 +284,10 @@ public class MainActivity extends Activity {
 
                 runOnUiThread(() -> {
                     progress.setProgress(100);
-                    setStatus("DOWNLOAD COMPLETE\n360p video + audio requested\nSaved in Movies / Rizwan Media Saver");
+                    setStatus("DOWNLOAD COMPLETE\n" + quality + "p video + audio\nSaved in Movies / Rizwan Media Saver");
                     downloadButton.setEnabled(true);
                     cancelButton.setEnabled(false);
+                    setQualityButtonsEnabled(true);
                     processId = null;
                 });
             } catch (Exception e) {
@@ -246,10 +295,34 @@ public class MainActivity extends Activity {
                     setStatus("DOWNLOAD FAILED\n" + safeMessage(e));
                     downloadButton.setEnabled(true);
                     cancelButton.setEnabled(false);
+                    setQualityButtonsEnabled(true);
                     processId = null;
                 });
             }
         });
+    }
+
+    private String formatSelectorFor(int quality) {
+        if (quality <= 360) {
+            // Proven v1.5.9 path: keep this selector unchanged.
+            return "18/" +
+                    "best[height<=360][ext=mp4][vcodec^=avc1][acodec^=mp4a]/" +
+                    "best[height<=360][ext=mp4][vcodec!=none][acodec!=none]/" +
+                    "bestvideo[height<=360][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/" +
+                    "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/" +
+                    "best[height<=360][vcodec!=none][acodec!=none]/best";
+        }
+
+        String q = String.valueOf(quality);
+        String progressive = quality == 720 ?
+                "22/best[height<=720][ext=mp4][vcodec!=none][acodec!=none]/" :
+                "best[height<=" + q + "][ext=mp4][vcodec!=none][acodec!=none]/";
+
+        return progressive +
+                "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/" +
+                "bestvideo[height<=" + q + "][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/" +
+                "bestvideo[height<=" + q + "][ext=mp4]+bestaudio[ext=m4a]/" +
+                "best[height<=" + q + "][vcodec!=none][acodec!=none]/best";
     }
 
     private void cancelDownload() {
@@ -263,6 +336,7 @@ public class MainActivity extends Activity {
         } finally {
             cancelButton.setEnabled(false);
             downloadButton.setEnabled(true);
+            setQualityButtonsEnabled(true);
         }
     }
 

@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("v1.5.7 · latest yt-dlp + EJS + FFmpeg · Android 8.1 test");
+        sub.setText("v1.5.9 · 360p video + AAC audio · Android 8.1 test");
         sub.setTextColor(Color.rgb(155, 166, 181));
         sub.setTextSize(14);
         sub.setPadding(0, dp(8), 0, dp(24));
@@ -87,7 +87,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         downloadButton = new Button(this);
-        downloadButton.setText("Download up to 360p");
+        downloadButton.setText("Download 360p with audio");
         downloadButton.setEnabled(false);
         downloadButton.setOnClickListener(v -> startDownload());
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
@@ -121,8 +121,8 @@ public class MainActivity extends Activity {
         root.addView(status);
 
         TextView note = new TextView(this);
-        note.setText("This build updates yt-dlp to the current nightly channel on launch, " +
-                "uses QuickJS + EJS challenge scripts, and bundles FFmpeg so separate video/audio streams can be merged.");
+        note.setText("This build prefers YouTube progressive MP4 formats that already contain both H.264 video and AAC audio. " +
+                "If a single-file format is unavailable, it falls back to separate MP4 video + M4A audio and merges them with FFmpeg.");
         note.setTextColor(Color.rgb(132, 143, 157));
         note.setTextSize(13);
         root.addView(note);
@@ -158,7 +158,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     downloadButton.setEnabled(true);
                     setStatus("Native engine READY\n" + readyText +
-                            "\nPaste the YouTube link and tap Download up to 360p.");
+                            "\nPaste the YouTube link and tap Download 360p with audio.");
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> setStatus("ENGINE INIT FAILED\n" + safeMessage(e)));
@@ -191,7 +191,7 @@ public class MainActivity extends Activity {
         downloadButton.setEnabled(false);
         cancelButton.setEnabled(true);
         progress.setProgress(0);
-        setStatus("Resolving YouTube formats with latest yt-dlp + EJS…");
+        setStatus("Resolving a 360p format with playable audio…");
 
         executor.execute(() -> {
             try {
@@ -199,12 +199,23 @@ public class MainActivity extends Activity {
                 request.addOption("--no-playlist");
                 request.addOption("--no-mtime");
                 request.addOption("--newline");
+                request.addOption("--force-ipv4");
                 request.addOption("--remote-components", "ejs:github");
                 request.addOption("--js-runtimes", "quickjs");
+                request.addOption("--extractor-args",
+                        "youtube:player_client=default,-android_sdkless;formats=missing_pot");
+
+                // Android 8.1 compatibility order:
+                // 1) YouTube format 18 = progressive 360p MP4 with H.264 + AAC audio.
+                // 2) Other progressive MP4 formats that already contain video + audio.
+                // 3) Separate H.264/MP4 video + AAC/M4A audio, merged by bundled FFmpeg.
                 request.addOption("-f",
+                        "18/" +
+                        "best[height<=360][ext=mp4][vcodec^=avc1][acodec^=mp4a]/" +
+                        "best[height<=360][ext=mp4][vcodec!=none][acodec!=none]/" +
+                        "bestvideo[height<=360][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/" +
                         "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/" +
-                        "bestvideo[height<=360]+bestaudio/" +
-                        "best[height<=360]/best");
+                        "best[height<=360][vcodec!=none][acodec!=none]/best");
                 request.addOption("--merge-output-format", "mp4");
                 request.addOption("-o", new File(outDir,
                         "%(title).180B [%(id)s].%(ext)s").getAbsolutePath());
@@ -215,7 +226,7 @@ public class MainActivity extends Activity {
                         progress.setProgress(p);
                         String etaText = eta != null && eta >= 0 ? (" · ETA " + eta + "s") : "";
                         setStatus(String.format(Locale.US,
-                                "Downloading… %d%%%s\n%s",
+                                "Downloading video + audio… %d%%%s\n%s",
                                 p, etaText, line == null ? "" : line));
                     });
                     return Unit.INSTANCE;
@@ -225,7 +236,7 @@ public class MainActivity extends Activity {
 
                 runOnUiThread(() -> {
                     progress.setProgress(100);
-                    setStatus("DOWNLOAD COMPLETE\nSaved in Movies / Rizwan Media Saver");
+                    setStatus("DOWNLOAD COMPLETE\n360p video + audio requested\nSaved in Movies / Rizwan Media Saver");
                     downloadButton.setEnabled(true);
                     cancelButton.setEnabled(false);
                     processId = null;

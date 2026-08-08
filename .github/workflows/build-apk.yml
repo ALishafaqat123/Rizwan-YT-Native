@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble debug APK
+    name: Assemble verified release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -38,21 +38,34 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
+      - name: Build signed release APK
         shell: bash
-        run: gradle --no-daemon --stacktrace clean assembleDebug
+        run: gradle --no-daemon --stacktrace clean assembleRelease
+
+      - name: Verify APK signature and alignment
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
+          grep -q "Verified using v1 scheme (JAR signing): true" apk-signature-verification.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apk-signature-verification.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee apk-badging.txt
 
       - name: Prepare APK artifact
         shell: bash
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/Rizwan-YT-Native-v1.5.7-signed-debug.apk
-          sha256sum artifacts/Rizwan-YT-Native-v1.5.7-signed-debug.apk | tee artifacts/SHA256.txt
+          cp app/build/outputs/apk/release/app-release.apk artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk
+          cp apk-signature-verification.txt artifacts/SIGNATURE-VERIFICATION.txt
+          cp apk-badging.txt artifacts/APK-BADGING.txt
+          sha256sum artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk | tee artifacts/SHA256.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-YT-Native-v1.5.7-Signed-APK
+          name: Rizwan-YT-Native-v1.5.8-Verified-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 14

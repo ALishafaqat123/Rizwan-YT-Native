@@ -7,11 +7,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.rizwan.ytnativefoundation'
+        applicationId 'com.rizwan.ytnative'
         minSdk 24
         targetSdk 27
-        versionCode 157
-        versionName '1.5.7-native-ejs-ffmpeg-signed'
+        versionCode 158
+        versionName '1.5.8-install-compat'
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -24,6 +24,8 @@ android {
             storePassword 'RizwanTest2026'
             keyAlias 'rizwan_test'
             keyPassword 'RizwanTest2026'
+            v1SigningEnabled true
+            v2SigningEnabled true
         }
     }
 

@@ -17,6 +17,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.yausername.ffmpeg.FFmpeg;
 import com.yausername.youtubedl_android.YoutubeDL;
 import com.yausername.youtubedl_android.YoutubeDLRequest;
 
@@ -67,7 +68,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Native yt-dlp foundation · 360p single-video test");
+        sub.setText("v1.5.7 · latest yt-dlp + EJS + FFmpeg · Android 8.1 test");
         sub.setTextColor(Color.rgb(155, 166, 181));
         sub.setTextSize(14);
         sub.setPadding(0, dp(8), 0, dp(24));
@@ -86,7 +87,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         downloadButton = new Button(this);
-        downloadButton.setText("Download 360p with native yt-dlp");
+        downloadButton.setText("Download up to 360p");
         downloadButton.setEnabled(false);
         downloadButton.setOnClickListener(v -> startDownload());
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
@@ -120,8 +121,8 @@ public class MainActivity extends Activity {
         root.addView(status);
 
         TextView note = new TextView(this);
-        note.setText("Foundation scope: one public YouTube video, combined 360p when available. " +
-                "No WebView URL replay, no Android DownloadManager, no 720p/1080p merge yet.");
+        note.setText("This build updates yt-dlp to the current nightly channel on launch, " +
+                "uses QuickJS + EJS challenge scripts, and bundles FFmpeg so separate video/audio streams can be merged.");
         note.setTextColor(Color.rgb(132, 143, 157));
         note.setTextSize(13);
         root.addView(note);
@@ -130,14 +131,34 @@ public class MainActivity extends Activity {
     }
 
     private void initEngine() {
-        setStatus("Initializing bundled Python/yt-dlp engine… first launch may take a little longer.");
+        setStatus("Initializing Python/yt-dlp + FFmpeg…");
         executor.execute(() -> {
+            String updateNote;
             try {
                 YoutubeDL.getInstance().init(getApplicationContext());
+                FFmpeg.getInstance().init(getApplicationContext());
+
+                String before = YoutubeDL.getInstance().versionName(getApplicationContext());
+                try {
+                    runOnUiThread(() -> setStatus("Native engine loaded. Updating yt-dlp to latest nightly…"));
+                    YoutubeDL.UpdateStatus updateStatus = YoutubeDL.getInstance().updateYoutubeDL(
+                            getApplicationContext(), YoutubeDL.UpdateChannel._NIGHTLY);
+                    String after = YoutubeDL.getInstance().versionName(getApplicationContext());
+                    updateNote = "yt-dlp " + (after == null ? "updated" : after) + " · " +
+                            (updateStatus == null ? "update checked" : updateStatus.toString());
+                } catch (Exception updateError) {
+                    String current = YoutubeDL.getInstance().versionName(getApplicationContext());
+                    updateNote = "yt-dlp update failed; using " +
+                            (current != null ? current : (before != null ? before : "bundled version")) +
+                            "\n" + safeMessage(updateError);
+                }
+
+                final String readyText = updateNote;
                 engineReady = true;
                 runOnUiThread(() -> {
                     downloadButton.setEnabled(true);
-                    setStatus("Native engine READY. Paste the same public YouTube link and tap Download 360p.");
+                    setStatus("Native engine READY\n" + readyText +
+                            "\nPaste the YouTube link and tap Download up to 360p.");
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> setStatus("ENGINE INIT FAILED\n" + safeMessage(e)));
@@ -170,7 +191,7 @@ public class MainActivity extends Activity {
         downloadButton.setEnabled(false);
         cancelButton.setEnabled(true);
         progress.setProgress(0);
-        setStatus("Resolving video with native yt-dlp…");
+        setStatus("Resolving YouTube formats with latest yt-dlp + EJS…");
 
         executor.execute(() -> {
             try {
@@ -178,7 +199,13 @@ public class MainActivity extends Activity {
                 request.addOption("--no-playlist");
                 request.addOption("--no-mtime");
                 request.addOption("--newline");
-                request.addOption("-f", "18/best[height<=360][ext=mp4]/best[height<=360]");
+                request.addOption("--remote-components", "ejs:github");
+                request.addOption("--js-runtimes", "quickjs");
+                request.addOption("-f",
+                        "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/" +
+                        "bestvideo[height<=360]+bestaudio/" +
+                        "best[height<=360]/best");
+                request.addOption("--merge-output-format", "mp4");
                 request.addOption("-o", new File(outDir,
                         "%(title).180B [%(id)s].%(ext)s").getAbsolutePath());
 

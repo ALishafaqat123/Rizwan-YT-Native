@@ -2,11 +2,12 @@ package com.rizwan.ytnativefoundation;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
+import android.media.MediaMuxer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,10 +26,12 @@ import com.yausername.ffmpeg.FFmpeg;
 import com.yausername.youtubedl_android.YoutubeDL;
 import com.yausername.youtubedl_android.YoutubeDLRequest;
 
-import java.io.BufferedReader;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -50,9 +53,7 @@ public class MainActivity extends Activity {
     private Button quality1080;
     private volatile boolean engineReady = false;
     private volatile String processId = null;
-    private volatile Process ffmpegProcess = null;
     private volatile int selectedQuality = 360;
-    private volatile String ffmpegSelfTest = "not tested";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,7 +83,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("v1.6.2 · explicit HD audio download + manual FFmpeg merge");
+        sub.setText("v1.6.3 · Android MediaMuxer HD audio merge · Android 8.1");
         sub.setTextColor(Color.rgb(155, 166, 181));
         sub.setTextSize(14);
         sub.setPadding(0, dp(8), 0, dp(24));
@@ -165,7 +166,7 @@ public class MainActivity extends Activity {
         root.addView(status);
 
         TextView note = new TextView(this);
-        note.setText("360p keeps the proven v1.5.9 single-file path. For HD, video and M4A audio are downloaded separately into a private work folder, then bundled FFmpeg is run directly. Only a verified final MP4 is copied to Movies / Rizwan Media Saver.");
+        note.setText("360p keeps the proven v1.5.9 single-file path. For 720p/1080p, H.264 MP4 video and AAC/M4A audio are downloaded separately, then Android's own MediaMuxer joins them into one verified MP4. FFmpeg is not used for HD merging.");
         note.setTextColor(Color.rgb(132, 143, 157));
         note.setTextSize(13);
         root.addView(note);
@@ -174,7 +175,7 @@ public class MainActivity extends Activity {
     }
 
     private void selectQuality(int quality) {
-        if (processId != null || ffmpegProcess != null) return;
+        if (processId != null) return;
         selectedQuality = quality;
         updateQualityButtons();
         if (downloadButton != null) {
@@ -196,17 +197,17 @@ public class MainActivity extends Activity {
     }
 
     private void initEngine() {
-        setStatus("Initializing Python/yt-dlp + FFmpeg...");
+        setStatus("Initializing Python/yt-dlp + Android MediaMuxer...");
         executor.execute(() -> {
             String updateNote;
             try {
                 YoutubeDL.getInstance().init(getApplicationContext());
-                FFmpeg.getInstance().init(getApplicationContext());
 
+                // Keep the bundled package available for the proven 360p fallback path,
+                // but HD merging in v1.6.3 does NOT execute FFmpeg.
                 try {
-                    ffmpegSelfTest = runFfmpegVersionTest();
-                } catch (Exception ffErr) {
-                    ffmpegSelfTest = "FAILED: " + safeMessage(ffErr);
+                    FFmpeg.getInstance().init(getApplicationContext());
+                } catch (Exception ignored) {
                 }
 
                 String before = YoutubeDL.getInstance().versionName(getApplicationContext());
@@ -225,12 +226,11 @@ public class MainActivity extends Activity {
                 }
 
                 final String readyText = updateNote;
-                final String ffText = ffmpegSelfTest;
                 engineReady = true;
                 runOnUiThread(() -> {
                     downloadButton.setEnabled(true);
                     setStatus("Native engine READY\n" + readyText +
-                            "\nFFmpeg self-test: " + ffText +
+                            "\nAndroid MediaMuxer READY (API " + Build.VERSION.SDK_INT + ")" +
                             "\nChoose 360p, 720p or 1080p.");
                 });
             } catch (Exception e) {
@@ -292,6 +292,7 @@ public class MainActivity extends Activity {
 
                 YoutubeDL.getInstance().execute(request, activeProcess,
                         progressCallback(0, 100, "Downloading 360p video + audio..."));
+                processId = null;
 
                 runOnUiThread(() -> {
                     progress.setProgress(100);
@@ -317,9 +318,11 @@ public class MainActivity extends Activity {
         final File workDir = new File(workRoot, safeId + "-" + quality + "p");
         if (!workDir.exists()) workDir.mkdirs();
 
+        final File mergedTemp = new File(workDir, "merged-final.mp4");
         final File finalFile = new File(outDir,
                 "YouTube [" + safeId + "] [" + quality + "p].mp4");
-        setStatus("HD stage 1/3: downloading " + quality + "p video stream...");
+
+        setStatus("HD stage 1/3: downloading " + quality + "p H.264 video stream...");
 
         executor.execute(() -> {
             try {
@@ -327,31 +330,33 @@ public class MainActivity extends Activity {
                 processId = videoPid;
                 YoutubeDLRequest videoReq = commonRequest(url);
                 videoReq.addOption("-f",
-                        "bestvideo[height<=" + quality + "][ext=mp4][vcodec^=avc1]/" +
-                        "bestvideo[height<=" + quality + "][ext=mp4]");
+                        "bestvideo[height<=" + quality + "][ext=mp4][vcodec^=avc1]");
                 videoReq.addOption("-o", new File(workDir, "video.%(ext)s").getAbsolutePath());
                 YoutubeDL.getInstance().execute(videoReq, videoPid,
-                        progressCallback(0, 78, "HD stage 1/3: downloading video..."));
+                        progressCallback(0, 78, "HD stage 1/3: downloading H.264 video..."));
                 processId = null;
 
                 File videoFile = findCompleteFile(workDir, "video.");
                 if (videoFile == null) {
-                    throw new Exception("Video stage finished but the video file was not found.\n" + listFiles(workDir));
+                    throw new Exception("Video stage finished but the H.264 MP4 file was not found.\n" + listFiles(workDir));
+                }
+                if (!hasVideoTrack(videoFile.getAbsolutePath())) {
+                    throw new Exception("Downloaded video file has no video track: " + videoFile.getName());
                 }
 
-                runOnUiThread(() -> setStatus("HD stage 2/3: downloading M4A/AAC audio stream..."));
+                runOnUiThread(() -> setStatus("HD stage 2/3: downloading AAC/M4A audio stream..."));
                 String audioPid = "rms-hd-audio-" + safeId + "-" + quality;
                 processId = audioPid;
                 YoutubeDLRequest audioReq = commonRequest(url);
-                audioReq.addOption("-f", "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[ext=m4a]");
+                audioReq.addOption("-f", "bestaudio[ext=m4a][acodec^=mp4a]");
                 audioReq.addOption("-o", new File(workDir, "audio.%(ext)s").getAbsolutePath());
                 YoutubeDL.getInstance().execute(audioReq, audioPid,
-                        progressCallback(78, 95, "HD stage 2/3: downloading audio..."));
+                        progressCallback(78, 95, "HD stage 2/3: downloading AAC audio..."));
                 processId = null;
 
                 File audioFile = findCompleteFile(workDir, "audio.");
                 if (audioFile == null) {
-                    throw new Exception("Audio stage finished but the M4A file was not found.\n" + listFiles(workDir));
+                    throw new Exception("Audio stage finished but the AAC/M4A file was not found.\n" + listFiles(workDir));
                 }
                 if (!hasAudioTrack(audioFile.getAbsolutePath())) {
                     throw new Exception("Downloaded audio file has no audio track: " + audioFile.getName());
@@ -359,29 +364,44 @@ public class MainActivity extends Activity {
 
                 runOnUiThread(() -> {
                     progress.setProgress(96);
-                    setStatus("HD stage 3/3: merging video + audio with bundled FFmpeg...");
+                    cancelButton.setEnabled(false);
+                    setStatus("HD stage 3/3: joining H.264 video + AAC audio with Android MediaMuxer...");
+                });
+
+                if (mergedTemp.exists()) mergedTemp.delete();
+                muxWithAndroid(videoFile, audioFile, mergedTemp);
+
+                if (!mergedTemp.isFile() || mergedTemp.length() <= 0) {
+                    throw new Exception("Android MediaMuxer did not create the merged MP4.\n" + listFiles(workDir));
+                }
+                if (!hasVideoTrack(mergedTemp.getAbsolutePath())) {
+                    throw new Exception("Merged MP4 has no video track.");
+                }
+                if (!hasAudioTrack(mergedTemp.getAbsolutePath())) {
+                    throw new Exception("Merged MP4 has no audio track.");
+                }
+
+                runOnUiThread(() -> {
+                    progress.setProgress(99);
+                    setStatus("HD merge complete. Verifying and saving final MP4...");
                 });
 
                 if (finalFile.exists() && !finalFile.delete()) {
                     throw new Exception("Could not replace the old final MP4: " + finalFile.getAbsolutePath());
                 }
+                moveOrCopy(mergedTemp, finalFile);
 
-                String mergeLog = mergeWithFfmpeg(videoFile, audioFile, finalFile);
-                if (!finalFile.isFile() || finalFile.length() <= 0) {
-                    throw new Exception("FFmpeg did not create the final MP4.\nFFmpeg self-test: " +
-                            ffmpegSelfTest + "\n\nFFmpeg log:\n" + tail(mergeLog, 5000) +
-                            "\n\nWork files:\n" + listFiles(workDir));
-                }
-                if (!hasAudioTrack(finalFile.getAbsolutePath())) {
-                    finalFile.delete();
-                    throw new Exception("Merged MP4 still has no audio track.\nFFmpeg log:\n" +
-                            tail(mergeLog, 5000));
+                if (!finalFile.isFile() || finalFile.length() <= 0 ||
+                        !hasVideoTrack(finalFile.getAbsolutePath()) ||
+                        !hasAudioTrack(finalFile.getAbsolutePath())) {
+                    if (finalFile.exists()) finalFile.delete();
+                    throw new Exception("Final saved MP4 verification failed.");
                 }
 
                 deleteWorkFiles(workDir);
                 runOnUiThread(() -> {
                     progress.setProgress(100);
-                    setStatus("DOWNLOAD COMPLETE\n" + quality + "p video + audio\nAudio track VERIFIED\n" +
+                    setStatus("DOWNLOAD COMPLETE\n" + quality + "p video + audio\nAudio track VERIFIED\nAndroid MediaMuxer PASS\n" +
                             finalFile.getAbsolutePath());
                     restoreIdleUi();
                 });
@@ -428,89 +448,150 @@ public class MainActivity extends Activity {
         };
     }
 
-    private String runFfmpegVersionTest() throws Exception {
-        File ffmpeg = getFfmpegBinary();
-        if (!ffmpeg.isFile()) {
-            throw new Exception("libffmpeg.so missing at " + ffmpeg.getAbsolutePath());
-        }
-        List<String> cmd = new ArrayList<>();
-        cmd.add(ffmpeg.getAbsolutePath());
-        cmd.add("-version");
-        ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
-        applyFfmpegEnvironment(pb);
-        Process p = pb.start();
-        String out = readProcessOutput(p);
-        int code = p.waitFor();
-        if (code != 0) {
-            throw new Exception("exit " + code + ": " + tail(out, 1000));
-        }
-        String first = out == null ? "" : out.trim();
-        int nl = first.indexOf('\n');
-        if (nl > 0) first = first.substring(0, nl).trim();
-        return first.isEmpty() ? "PASS" : first;
-    }
+    private void muxWithAndroid(File videoFile, File audioFile, File outputFile) throws Exception {
+        MediaExtractor videoExtractor = new MediaExtractor();
+        MediaExtractor audioExtractor = new MediaExtractor();
+        MediaMuxer muxer = null;
+        boolean muxerStarted = false;
 
-    private String mergeWithFfmpeg(File video, File audio, File output) throws Exception {
-        File ffmpeg = getFfmpegBinary();
-        List<String> cmd = new ArrayList<>();
-        cmd.add(ffmpeg.getAbsolutePath());
-        cmd.add("-y");
-        cmd.add("-i");
-        cmd.add(video.getAbsolutePath());
-        cmd.add("-i");
-        cmd.add(audio.getAbsolutePath());
-        cmd.add("-map");
-        cmd.add("0:v:0");
-        cmd.add("-map");
-        cmd.add("1:a:0");
-        cmd.add("-c:v");
-        cmd.add("copy");
-        cmd.add("-c:a");
-        cmd.add("copy");
-        cmd.add("-movflags");
-        cmd.add("+faststart");
-        cmd.add(output.getAbsolutePath());
+        try {
+            videoExtractor.setDataSource(videoFile.getAbsolutePath());
+            audioExtractor.setDataSource(audioFile.getAbsolutePath());
 
-        ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
-        applyFfmpegEnvironment(pb);
-        Process p = pb.start();
-        ffmpegProcess = p;
-        String log = readProcessOutput(p);
-        int code = p.waitFor();
-        ffmpegProcess = null;
-        if (code != 0) {
-            if (output.exists()) output.delete();
-            throw new Exception("FFmpeg merge failed (exit " + code + ").\n" + tail(log, 5000));
-        }
-        return log;
-    }
+            int videoSourceTrack = findTrack(videoExtractor, "video/");
+            int audioSourceTrack = findTrack(audioExtractor, "audio/");
+            if (videoSourceTrack < 0) throw new Exception("MediaMuxer input video track not found.");
+            if (audioSourceTrack < 0) throw new Exception("MediaMuxer input audio track not found.");
 
-    private File getFfmpegBinary() {
-        ApplicationInfo ai = getApplicationInfo();
-        return new File(ai.nativeLibraryDir, "libffmpeg.so");
-    }
+            MediaFormat videoFormat = videoExtractor.getTrackFormat(videoSourceTrack);
+            MediaFormat audioFormat = audioExtractor.getTrackFormat(audioSourceTrack);
+            String videoMime = videoFormat.getString(MediaFormat.KEY_MIME);
+            String audioMime = audioFormat.getString(MediaFormat.KEY_MIME);
 
-    private void applyFfmpegEnvironment(ProcessBuilder pb) {
-        File base = new File(getNoBackupFilesDir(), "youtubedl-android/packages");
-        File ffLib = new File(base, "ffmpeg/usr/lib");
-        File pyLib = new File(base, "python/usr/lib");
-        String oldLd = System.getenv("LD_LIBRARY_PATH");
-        String ld = pyLib.getAbsolutePath() + ":" + ffLib.getAbsolutePath() +
-                ":" + getApplicationInfo().nativeLibraryDir;
-        if (oldLd != null && !oldLd.isEmpty()) ld += ":" + oldLd;
-        pb.environment().put("LD_LIBRARY_PATH", ld);
-        pb.environment().put("TMPDIR", getCacheDir().getAbsolutePath());
-    }
+            if (videoMime == null || !"video/avc".equalsIgnoreCase(videoMime)) {
+                throw new Exception("MediaMuxer requires H.264/AVC video, got: " + videoMime);
+            }
+            if (audioMime == null || !audioMime.toLowerCase(Locale.US).startsWith("audio/mp4a")) {
+                throw new Exception("MediaMuxer requires AAC/M4A audio, got: " + audioMime);
+            }
 
-    private String readProcessOutput(Process p) throws Exception {
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                sb.append(line).append('\n');
+            if (outputFile.exists() && !outputFile.delete()) {
+                throw new Exception("Could not replace temporary merged MP4.");
+            }
+
+            muxer = new MediaMuxer(outputFile.getAbsolutePath(),
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+
+            if (videoFormat.containsKey(MediaFormat.KEY_ROTATION)) {
+                int rotation = videoFormat.getInteger(MediaFormat.KEY_ROTATION);
+                if (rotation == 90 || rotation == 180 || rotation == 270) {
+                    muxer.setOrientationHint(rotation);
+                }
+            }
+
+            int videoMuxTrack = muxer.addTrack(videoFormat);
+            int audioMuxTrack = muxer.addTrack(audioFormat);
+
+            videoExtractor.selectTrack(videoSourceTrack);
+            audioExtractor.selectTrack(audioSourceTrack);
+            muxer.start();
+            muxerStarted = true;
+
+            int bufferSize = Math.max(8 * 1024 * 1024,
+                    Math.max(maxInputSize(videoFormat), maxInputSize(audioFormat)) + 1024);
+            ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+
+            long videoTime = videoExtractor.getSampleTime();
+            long audioTime = audioExtractor.getSampleTime();
+
+            while (videoTime >= 0 || audioTime >= 0) {
+                boolean useVideo = audioTime < 0 ||
+                        (videoTime >= 0 && videoTime <= audioTime);
+                MediaExtractor extractor = useVideo ? videoExtractor : audioExtractor;
+                int muxTrack = useVideo ? videoMuxTrack : audioMuxTrack;
+
+                buffer.clear();
+                int sampleSize = extractor.readSampleData(buffer, 0);
+                if (sampleSize < 0) {
+                    if (useVideo) videoTime = -1;
+                    else audioTime = -1;
+                    continue;
+                }
+
+                long sampleTime = extractor.getSampleTime();
+                int sampleFlags = extractor.getSampleFlags();
+                info.set(0, sampleSize, sampleTime, sampleFlags);
+                muxer.writeSampleData(muxTrack, buffer, info);
+                extractor.advance();
+
+                if (useVideo) videoTime = videoExtractor.getSampleTime();
+                else audioTime = audioExtractor.getSampleTime();
+            }
+
+            muxer.stop();
+            muxerStarted = false;
+        } finally {
+            try {
+                videoExtractor.release();
+            } catch (Exception ignored) {
+            }
+            try {
+                audioExtractor.release();
+            } catch (Exception ignored) {
+            }
+            if (muxer != null) {
+                if (muxerStarted) {
+                    try {
+                        muxer.stop();
+                    } catch (Exception ignored) {
+                    }
+                }
+                try {
+                    muxer.release();
+                } catch (Exception ignored) {
+                }
             }
         }
-        return sb.toString();
+    }
+
+    private int findTrack(MediaExtractor extractor, String mimePrefix) {
+        for (int i = 0; i < extractor.getTrackCount(); i++) {
+            MediaFormat format = extractor.getTrackFormat(i);
+            String mime = format.getString(MediaFormat.KEY_MIME);
+            if (mime != null && mime.startsWith(mimePrefix)) return i;
+        }
+        return -1;
+    }
+
+    private int maxInputSize(MediaFormat format) {
+        try {
+            if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                return Math.max(0, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
+    }
+
+    private void moveOrCopy(File source, File destination) throws Exception {
+        if (source.renameTo(destination)) return;
+
+        try (BufferedInputStream in = new BufferedInputStream(new FileInputStream(source));
+             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(destination))) {
+            byte[] buf = new byte[1024 * 1024];
+            int read;
+            while ((read = in.read(buf)) != -1) {
+                out.write(buf, 0, read);
+            }
+            out.flush();
+        }
+
+        if (!destination.isFile() || destination.length() != source.length()) {
+            if (destination.exists()) destination.delete();
+            throw new Exception("Could not copy merged MP4 to Movies folder.");
+        }
+        source.delete();
     }
 
     private File findCompleteFile(File dir, String prefix) {
@@ -548,12 +629,17 @@ public class MainActivity extends Activity {
         MediaExtractor extractor = new MediaExtractor();
         try {
             extractor.setDataSource(path);
-            for (int i = 0; i < extractor.getTrackCount(); i++) {
-                MediaFormat format = extractor.getTrackFormat(i);
-                String mime = format.getString(MediaFormat.KEY_MIME);
-                if (mime != null && mime.startsWith("audio/")) return true;
-            }
-            return false;
+            return findTrack(extractor, "audio/") >= 0;
+        } finally {
+            extractor.release();
+        }
+    }
+
+    private boolean hasVideoTrack(String path) throws Exception {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(path);
+            return findTrack(extractor, "video/") >= 0;
         } finally {
             extractor.release();
         }
@@ -588,15 +674,8 @@ public class MainActivity extends Activity {
         return s.replaceAll("[^A-Za-z0-9_-]", "_");
     }
 
-    private String tail(String text, int maxChars) {
-        if (text == null) return "";
-        if (text.length() <= maxChars) return text;
-        return "...\n" + text.substring(text.length() - maxChars);
-    }
-
     private void restoreIdleUi() {
         processId = null;
-        ffmpegProcess = null;
         downloadButton.setEnabled(true);
         cancelButton.setEnabled(false);
         setQualityButtonsEnabled(true);
@@ -607,13 +686,6 @@ public class MainActivity extends Activity {
         if (id != null) {
             try {
                 YoutubeDL.getInstance().destroyProcessById(id);
-            } catch (Exception ignored) {
-            }
-        }
-        Process fp = ffmpegProcess;
-        if (fp != null) {
-            try {
-                fp.destroy();
             } catch (Exception ignored) {
             }
         }

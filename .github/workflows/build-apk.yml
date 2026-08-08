@@ -70,9 +70,17 @@ jobs:
           set -euo pipefail
           APK="artifacts/Rizwan-YT-Native-v1.5.8-install-compat.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee artifacts/SIGNATURE-VERIFICATION.txt
-          grep -q "Verified using v1 scheme (JAR signing): true" artifacts/SIGNATURE-VERIFICATION.txt
-          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-VERIFICATION.txt
+
+          # Android 8.1 (API 27) uses APK Signature Scheme v2.
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-ANDROID8.txt
+
+          # Force pre-24 verification to prove the JAR/v1 signature is also valid.
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 23 "$APK" | tee artifacts/SIGNATURE-V1-COMPAT.txt
+          grep -q "Verified using v1 scheme (JAR signing): true" artifacts/SIGNATURE-V1-COMPAT.txt
+          jarsigner -verify -certs "$APK" | tee artifacts/JARSIGNER-VERIFICATION.txt
+          grep -q "jar verified" artifacts/JARSIGNER-VERIFICATION.txt
+
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
           grep -q "package: name='com.rizwan.ytnative'" artifacts/APK-BADGING.txt
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt

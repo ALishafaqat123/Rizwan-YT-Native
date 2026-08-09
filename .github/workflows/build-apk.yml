@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble verified V2.0.5 release APK
+    name: Assemble verified V2.0.6 release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -40,7 +40,7 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build unsigned V2.0.5 release APK
+      - name: Build unsigned V2.0.6 release APK
         shell: bash
         run: gradle --no-daemon --stacktrace clean assembleRelease
 
@@ -50,8 +50,8 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="artifacts/Rizwan-Media-Saver-V2-v2.0.5-aligned-unsigned.apk"
-          FINAL="artifacts/Rizwan-Media-Saver-V2-v2.0.5-Media3-Batched.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-V2-v2.0.6-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-V2-v2.0.6-No-Mux-HD.apk"
           test -f "$UNSIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/Rizwan-Media-Saver-V2-v2.0.5-Media3-Batched.apk"
+          APK="artifacts/Rizwan-Media-Saver-V2-v2.0.6-No-Mux-HD.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-ANDROID8.txt
@@ -80,17 +80,16 @@ jobs:
           grep -q "jar verified" artifacts/JARSIGNER-VERIFICATION.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
           grep -q "package: name='com.rizwan.ytnative.v2preview'" artifacts/APK-BADGING.txt
-          grep -q "versionCode='205'" artifacts/APK-BADGING.txt
-          grep -q "versionName='2.0.5-media3-batched-preview'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='206'" artifacts/APK-BADGING.txt
+          grep -q "versionName='2.0.6-no-mux-hd-preview'" artifacts/APK-BADGING.txt
           grep -q "application-label:'Rizwan Media Saver V2'" artifacts/APK-BADGING.txt
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
           sha256sum "$APK" | tee artifacts/SHA256.txt
 
-      # Rebuild marker: corrected Media3 BufferInfo API for batched sample writes.
-      - name: Upload verified V2.0.5 APK
+      - name: Upload verified V2.0.6 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-V2-v2.0.5-Media3-Batched-Verified-APK
+          name: Rizwan-Media-Saver-V2-v2.0.6-No-Mux-HD-Verified-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 14

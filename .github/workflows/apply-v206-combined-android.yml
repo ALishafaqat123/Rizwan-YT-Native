@@ -1,0 +1,85 @@
+name: Apply V2.0.6 Combined Android HD Patch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "v2-ui-rebuild" ]
+    paths:
+      - ".github/workflows/apply-v206-combined-android.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-ui-rebuild
+          fetch-depth: 0
+
+      - name: Patch V2 combined HD fast path
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('app/src/main/java/com/rizwan/ytnativefoundation/V2MainActivity.java')
+          s = p.read_text()
+
+          old = '    private final ConcurrentHashMap<String, VideoInfo> infoCache = new ConcurrentHashMap<>();\n'
+          new = old + '    private final ConcurrentHashMap<String, VideoInfo> combinedAndroidInfoCache = new ConcurrentHashMap<>();\n'
+          if old not in s:
+              raise SystemExit('infoCache anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''            VideoInfo info = getSingleInfo(task.url);\n            combined = findExactCombinedFormat(info, task.quality);\n        } catch (Exception ignored) { }\n\n        if (combined != null && combined.getFormatId() != null && !combined.getFormatId().trim().isEmpty()) {'''
+          new = '''            VideoInfo info = getSingleInfo(task.url);\n            combined = findExactCombinedFormat(info, task.quality);\n        } catch (Exception ignored) { }\n\n        String combinedExtractorArgs = null;\n        String combinedSource = "Default client";\n        // yt-dlp no longer includes the Android client in every default-client set.\n        // Android has historically exposed progressive 720p MP4 (itag 22) on videos\n        // where the web/default clients only expose separate adaptive streams.\n        if (combined == null && task.quality == 720) {\n            try {\n                task.stage = "Checking Android 720p fast stream";\n                runOnUiThread(() -> {\n                    activeTitle.setText(itemPrefix(task) + "Checking no-mux 720p stream");\n                    setStatus(task.playlistBatch ? playlistStatusLine(task, 1) :\n                            "Checking Android progressive MP4 before separate video + audio…");\n                    refreshQueueUi();\n                });\n                VideoInfo androidInfo = getAndroidCombinedInfo(task.url);\n                VideoFormat androidCombined = findExactCombinedFormat(androidInfo, 720);\n                if (androidCombined != null) {\n                    combined = androidCombined;\n                    combinedExtractorArgs = "youtube:player_client=android;formats=missing_pot";\n                    combinedSource = "Android progressive";\n                }\n            } catch (Exception ignored) { }\n        }\n\n        if (combined != null && combined.getFormatId() != null && !combined.getFormatId().trim().isEmpty()) {'''
+          if old not in s:
+              raise SystemExit('combined probe anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''            String fastPid = "rms-fast-combined-" + safeId + "-" + task.quality;\n            processId = fastPid;\n            YoutubeDLRequest fastReq = commonRequest(task.url);\n            fastReq.addOption("-f", combined.getFormatId());\n            fastReq.addOption("-o", finalFile.getAbsolutePath());\n            try {\n                YoutubeDL.getInstance().execute(fastReq, fastPid,\n                        progressCallback(1, 99, "Downloading ready-made " + task.quality + "p MP4"));\n                processId = null;\n                if (cancelCurrent) throw new Exception("Canceled");\n                if (!finalFile.isFile() || finalFile.length() <= 0 ||\n                        !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {\n                    throw new Exception("Combined MP4 verification failed.");\n                }\n                deleteWorkFiles(workDir);\n                task.stage = "Completed • no joining needed";\n                task.itemProgress = 100;\n                final long finalBytes = finalFile.length();\n                runOnUiThread(() -> {\n                    progress.setProgress(overallProgress(task, 100));\n                    activeTitle.setText(itemPrefix(task) + "Completed • no joining needed");\n                    activeMeta.setText(task.title + " • " + formatBytes(finalBytes));\n                    setStatus(task.playlistBatch ? playlistStatusLine(task, 100) + "\\nNo joining needed." :\n                            "Ready-made video+audio MP4 used • no joining needed.");\n                    refreshQueueUi();\n                });\n                return;'''
+          new = '''            String fastPid = "rms-fast-combined-" + safeId + "-" + task.quality;\n            processId = fastPid;\n            final String fastSource = combinedSource;\n            final String fastFormatId = combined.getFormatId();\n            YoutubeDLRequest fastReq = combinedExtractorArgs == null\n                    ? commonRequest(task.url)\n                    : commonRequest(task.url, combinedExtractorArgs);\n            fastReq.addOption("-f", fastFormatId);\n            fastReq.addOption("-o", finalFile.getAbsolutePath());\n            try {\n                YoutubeDL.getInstance().execute(fastReq, fastPid,\n                        progressCallback(1, 99, "Downloading ready-made " + task.quality + "p MP4"));\n                processId = null;\n                if (cancelCurrent) throw new Exception("Canceled");\n                long fastFinalizeStarted = System.currentTimeMillis();\n                long fastVerifyStarted = System.currentTimeMillis();\n                if (!finalFile.isFile() || finalFile.length() <= 0 ||\n                        !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {\n                    throw new Exception("Combined MP4 verification failed.");\n                }\n                long fastVerifyMs = Math.max(0L, System.currentTimeMillis() - fastVerifyStarted);\n                deleteWorkFiles(workDir);\n                long fastFinalizeMs = Math.max(0L, System.currentTimeMillis() - fastFinalizeStarted);\n                lastFinalizeReport = fastSource + " combined • format " + fastFormatId +\n                        " • Mux 0 ms • Verify " + formatElapsedMs(fastVerifyMs) +\n                        " • Total " + formatElapsedMs(fastFinalizeMs);\n                task.stage = "Completed • no joining needed";\n                task.itemProgress = 100;\n                final long finalBytes = finalFile.length();\n                final String fastReport = lastFinalizeReport;\n                runOnUiThread(() -> {\n                    progress.setProgress(overallProgress(task, 100));\n                    activeTitle.setText(itemPrefix(task) + "Completed • no joining needed");\n                    activeMeta.setText(task.title + " • " + formatBytes(finalBytes));\n                    setStatus(task.playlistBatch ? playlistStatusLine(task, 100) + "\\n" + fastReport : fastReport);\n                    Toast.makeText(this, "No joining needed", Toast.LENGTH_SHORT).show();\n                    refreshQueueUi();\n                });\n                return;'''
+          if old not in s:
+              raise SystemExit('fast download anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    private YoutubeDLRequest commonRequest(String url) {\n        YoutubeDLRequest request = new YoutubeDLRequest(url);'''
+          new = '''    private YoutubeDLRequest commonRequest(String url) {\n        return commonRequest(url, "youtube:player_client=default,-android_sdkless;formats=missing_pot");\n    }\n\n    private YoutubeDLRequest commonRequest(String url, String extractorArgs) {\n        YoutubeDLRequest request = new YoutubeDLRequest(url);'''
+          if old not in s:
+              raise SystemExit('commonRequest anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '        request.addOption("--extractor-args", "youtube:player_client=default,-android_sdkless;formats=missing_pot");\n        return request;\n    }\n'
+          new = '        request.addOption("--extractor-args", extractorArgs);\n        return request;\n    }\n'
+          if old not in s:
+              raise SystemExit('extractor args anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''        if (info != null) infoCache.put(key, info);\n        return info;\n    }\n\n    private void enqueueSingle(String url, String title, int quality, int audioKbps) {'''
+          new = '''        if (info != null) infoCache.put(key, info);\n        return info;\n    }\n\n    private VideoInfo getAndroidCombinedInfo(String url) throws Exception {\n        String id = getYoutubeId(url);\n        String key = id == null || id.isEmpty() ? url : id;\n        VideoInfo cached = combinedAndroidInfoCache.get(key);\n        if (cached != null) return cached;\n\n        YoutubeDLRequest request = new YoutubeDLRequest(url);\n        request.addOption("--no-playlist");\n        request.addOption("--force-ipv4");\n        request.addOption("--remote-components", "ejs:github");\n        request.addOption("--js-runtimes", "quickjs");\n        request.addOption("--extractor-args", "youtube:player_client=android;formats=missing_pot");\n        VideoInfo info = YoutubeDL.getInstance().getInfo(request);\n        if (info != null) combinedAndroidInfoCache.put(key, info);\n        return info;\n    }\n\n    private void enqueueSingle(String url, String title, int quality, int audioKbps) {'''
+          if old not in s:
+              raise SystemExit('getSingleInfo anchor not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+          g = Path('app/build.gradle')
+          t = g.read_text()
+          t = t.replace('versionCode 205', 'versionCode 206', 1)
+          t = t.replace("versionName '2.0.5-media3-batched-preview'", "versionName '2.0.6-no-mux-hd-preview'", 1)
+          if 'versionCode 206' not in t or "2.0.6-no-mux-hd-preview" not in t:
+              raise SystemExit('version patch failed')
+          g.write_text(t)
+          PY
+
+      - name: Commit V2.0.6 source patch
+        shell: bash
+        run: |
+          git config user.name "Rizwan Media Saver CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/rizwan/ytnativefoundation/V2MainActivity.java app/build.gradle
+          git commit -m "Add Android progressive no-mux 720p fast path"
+          git push origin HEAD:v2-ui-rebuild

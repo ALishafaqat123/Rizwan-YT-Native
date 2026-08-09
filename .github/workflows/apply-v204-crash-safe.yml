@@ -1,0 +1,35 @@
+name: Apply V2.0.4 Crash Safe Finalize Patch
+
+on:
+  push:
+    branches: [ "v2-ui-rebuild" ]
+    paths:
+      - '.github/scripts/v204_crash_safe_finalize.py'
+      - '.github/workflows/apply-v204-crash-safe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-ui-rebuild
+      - name: Apply V2.0.4 crash-safe source patch
+        run: python3 .github/scripts/v204_crash_safe_finalize.py
+      - name: Commit source and build config only
+        shell: bash
+        run: |
+          set -e
+          git config user.name "Rizwan Media Saver CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/rizwan/ytnativefoundation/V2MainActivity.java app/build.gradle
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Remove native crash path and measure safe finalize stages"
+            git push origin HEAD:v2-ui-rebuild
+          fi

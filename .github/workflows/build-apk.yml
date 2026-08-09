@@ -86,6 +86,7 @@ jobs:
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
           sha256sum "$APK" | tee artifacts/SHA256.txt
 
+      # Rebuild marker: corrected Media3 BufferInfo API for batched sample writes.
       - name: Upload verified V2.0.5 APK
         uses: actions/upload-artifact@v4
         with:

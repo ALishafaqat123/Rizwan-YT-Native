@@ -1,0 +1,35 @@
+name: Apply V2.0.5 BufferInfo Fix
+
+on:
+  push:
+    branches: [ "v2-ui-rebuild" ]
+    paths:
+      - '.github/scripts/v205_bufferinfo_fix.py'
+      - '.github/workflows/apply-v205-bufferinfo-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-ui-rebuild
+      - name: Apply Media3 BufferInfo fix
+        run: python3 .github/scripts/v205_bufferinfo_fix.py
+      - name: Commit source fix
+        shell: bash
+        run: |
+          set -e
+          git config user.name "Rizwan Media Saver CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/rizwan/ytnativefoundation/V2MainActivity.java
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Fix Media3 muxer BufferInfo type"
+            git push origin HEAD:v2-ui-rebuild
+          fi

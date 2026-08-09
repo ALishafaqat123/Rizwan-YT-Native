@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble verified V2.0.6 release APK
+    name: Assemble verified V2.0.7 release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -19,6 +19,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: v2-ui-rebuild
+
+      - name: Apply V2.0.7 no-wasted-wait patch
+        shell: bash
+        run: python3 tools/apply_v207.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -40,7 +44,7 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build unsigned V2.0.6 release APK
+      - name: Build unsigned V2.0.7 release APK
         shell: bash
         run: gradle --no-daemon --stacktrace clean assembleRelease
 
@@ -50,8 +54,8 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="artifacts/Rizwan-Media-Saver-V2-v2.0.6-aligned-unsigned.apk"
-          FINAL="artifacts/Rizwan-Media-Saver-V2-v2.0.6-No-Mux-HD.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-V2-v2.0.7-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-V2-v2.0.7-No-Wasted-Wait-Timing.apk"
           test -f "$UNSIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
@@ -70,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/Rizwan-Media-Saver-V2-v2.0.6-No-Mux-HD.apk"
+          APK="artifacts/Rizwan-Media-Saver-V2-v2.0.7-No-Wasted-Wait-Timing.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-ANDROID8.txt
@@ -80,16 +84,16 @@ jobs:
           grep -q "jar verified" artifacts/JARSIGNER-VERIFICATION.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
           grep -q "package: name='com.rizwan.ytnative.v2preview'" artifacts/APK-BADGING.txt
-          grep -q "versionCode='206'" artifacts/APK-BADGING.txt
-          grep -q "versionName='2.0.6-no-mux-hd-preview'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='207'" artifacts/APK-BADGING.txt
+          grep -q "versionName='2.0.7-no-wasted-wait-timing-preview'" artifacts/APK-BADGING.txt
           grep -q "application-label:'Rizwan Media Saver V2'" artifacts/APK-BADGING.txt
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
           sha256sum "$APK" | tee artifacts/SHA256.txt
 
-      - name: Upload verified V2.0.6 APK
+      - name: Upload verified V2.0.7 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-V2-v2.0.6-No-Mux-HD-Verified-APK
+          name: Rizwan-Media-Saver-V2-v2.0.7-No-Wasted-Wait-Timing-Verified-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 14

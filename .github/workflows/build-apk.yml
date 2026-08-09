@@ -50,8 +50,8 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="artifacts/Rizwan-Media-Saver-v2.0.0-aligned-unsigned.apk"
-          FINAL="artifacts/Rizwan-Media-Saver-v2.0.0-ui-rebuild-preview.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-V2-Preview-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-V2-Preview.apk"
           test -f "$UNSIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/Rizwan-Media-Saver-v2.0.0-ui-rebuild-preview.apk"
+          APK="artifacts/Rizwan-Media-Saver-V2-Preview.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
 
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
@@ -82,17 +82,17 @@ jobs:
           grep -q "jar verified" artifacts/JARSIGNER-VERIFICATION.txt
 
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
-          grep -q "package: name='com.rizwan.ytnative'" artifacts/APK-BADGING.txt
+          grep -q "package: name='com.rizwan.ytnative.v2preview'" artifacts/APK-BADGING.txt
           grep -q "versionCode='200'" artifacts/APK-BADGING.txt
           grep -q "versionName='2.0.0-ui-rebuild-preview'" artifacts/APK-BADGING.txt
-          grep -q "application-label:'Rizwan Media Saver'" artifacts/APK-BADGING.txt
+          grep -q "application-label:'Rizwan Media Saver V2'" artifacts/APK-BADGING.txt
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
           sha256sum "$APK" | tee artifacts/SHA256.txt
 
       - name: Upload verified V2 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-v2.0.0-UI-Rebuild-Preview-Verified-APK
+          name: Rizwan-Media-Saver-V2-Side-by-Side-Preview-Verified-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 14

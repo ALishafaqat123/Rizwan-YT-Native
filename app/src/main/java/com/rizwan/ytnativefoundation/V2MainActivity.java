@@ -1616,7 +1616,6 @@ public class V2MainActivity extends Activity {
             int bufferSize = Math.max(8 * 1024 * 1024,
                     Math.max(maxInputSize(vf), maxInputSize(af)) + 1024);
             ByteBuffer buffer = ByteBuffer.allocateDirect(bufferSize);
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             long vt = videoExtractor.getSampleTime();
             long at = audioExtractor.getSampleTime();
             while (vt >= 0 || at >= 0) {
@@ -1629,8 +1628,9 @@ public class V2MainActivity extends Activity {
                     if (useVideo) vt = -1; else at = -1;
                     continue;
                 }
-                info.set(0, size, ex.getSampleTime(), ex.getSampleFlags());
-                muxer.writeSampleData(track, buffer, info);
+                androidx.media3.muxer.BufferInfo muxInfo = new androidx.media3.muxer.BufferInfo(
+                        ex.getSampleTime(), size, ex.getSampleFlags());
+                muxer.writeSampleData(track, buffer, muxInfo);
                 ex.advance();
                 if (useVideo) vt = videoExtractor.getSampleTime();
                 else at = audioExtractor.getSampleTime();

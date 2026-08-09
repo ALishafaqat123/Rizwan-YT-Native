@@ -18,6 +18,9 @@ import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import androidx.media3.common.Format;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.muxer.Mp4Muxer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -1436,7 +1439,14 @@ public class V2MainActivity extends Activity {
         long finalizeStarted = System.currentTimeMillis();
 
         long muxStarted = System.currentTimeMillis();
-        muxWithAndroid(videoFile, audioFile, mergedTemp);
+        String muxEngine = "Media3 batched";
+        try {
+            muxWithMedia3Batched(videoFile, audioFile, mergedTemp);
+        } catch (Exception batchedError) {
+            if (mergedTemp.exists()) mergedTemp.delete();
+            muxEngine = "Android fallback";
+            muxWithAndroid(videoFile, audioFile, mergedTemp);
+        }
         long muxMs = Math.max(0L, System.currentTimeMillis() - muxStarted);
 
         task.stage = "Verifying merged MP4";
@@ -1482,7 +1492,7 @@ public class V2MainActivity extends Activity {
         long cleanupMs = Math.max(0L, System.currentTimeMillis() - cleanupStarted);
         long finalizeMs = Math.max(0L, System.currentTimeMillis() - finalizeStarted);
 
-        lastFinalizeReport = "Android MediaMuxer • Mux " + formatElapsedMs(muxMs) +
+        lastFinalizeReport = muxEngine + " • Mux " + formatElapsedMs(muxMs) +
                 " • Verify " + formatElapsedMs(verifyMs + finalVerifyMs) +
                 " • Save " + formatElapsedMs(saveMs) +
                 " • Cleanup " + formatElapsedMs(cleanupMs) +
@@ -1567,6 +1577,111 @@ public class V2MainActivity extends Activity {
         };
     }
 
+
+    private void muxWithMedia3Batched(File videoFile, File audioFile, File outputFile) throws Exception {
+        MediaExtractor videoExtractor = new MediaExtractor();
+        MediaExtractor audioExtractor = new MediaExtractor();
+        Mp4Muxer muxer = null;
+        try {
+            videoExtractor.setDataSource(videoFile.getAbsolutePath());
+            audioExtractor.setDataSource(audioFile.getAbsolutePath());
+            int vs = findTrack(videoExtractor, "video/");
+            int as = findTrack(audioExtractor, "audio/");
+            if (vs < 0 || as < 0) throw new Exception("Media3 input track missing.");
+
+            MediaFormat vf = videoExtractor.getTrackFormat(vs);
+            MediaFormat af = audioExtractor.getTrackFormat(as);
+            String vm = vf.getString(MediaFormat.KEY_MIME);
+            String am = af.getString(MediaFormat.KEY_MIME);
+            if (vm == null || !"video/avc".equalsIgnoreCase(vm))
+                throw new Exception("Media3 batched mux requires H.264 video, got " + vm);
+            if (am == null || !am.toLowerCase(Locale.US).startsWith("audio/mp4a"))
+                throw new Exception("Media3 batched mux requires AAC audio, got " + am);
+
+            if (outputFile.exists() && !outputFile.delete())
+                throw new Exception("Could not replace Media3 output MP4.");
+
+            muxer = new Mp4Muxer.Builder(new FileOutputStream(outputFile))
+                    .setSampleBatchingEnabled(true)
+                    .setSampleCopyingEnabled(true)
+                    .build();
+
+            Format videoFormat = media3VideoFormat(vf);
+            Format audioFormat = media3AudioFormat(af);
+            int vmux = muxer.addTrack(videoFormat);
+            int amux = muxer.addTrack(audioFormat);
+
+            videoExtractor.selectTrack(vs);
+            audioExtractor.selectTrack(as);
+            int bufferSize = Math.max(8 * 1024 * 1024,
+                    Math.max(maxInputSize(vf), maxInputSize(af)) + 1024);
+            ByteBuffer buffer = ByteBuffer.allocateDirect(bufferSize);
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            long vt = videoExtractor.getSampleTime();
+            long at = audioExtractor.getSampleTime();
+            while (vt >= 0 || at >= 0) {
+                boolean useVideo = at < 0 || (vt >= 0 && vt <= at);
+                MediaExtractor ex = useVideo ? videoExtractor : audioExtractor;
+                int track = useVideo ? vmux : amux;
+                buffer.clear();
+                int size = ex.readSampleData(buffer, 0);
+                if (size < 0) {
+                    if (useVideo) vt = -1; else at = -1;
+                    continue;
+                }
+                info.set(0, size, ex.getSampleTime(), ex.getSampleFlags());
+                muxer.writeSampleData(track, buffer, info);
+                ex.advance();
+                if (useVideo) vt = videoExtractor.getSampleTime();
+                else at = audioExtractor.getSampleTime();
+            }
+            muxer.close();
+            muxer = null;
+        } finally {
+            try { videoExtractor.release(); } catch (Exception ignored) { }
+            try { audioExtractor.release(); } catch (Exception ignored) { }
+            if (muxer != null) try { muxer.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    private Format media3VideoFormat(MediaFormat f) throws Exception {
+        ArrayList<byte[]> init = media3InitData(f);
+        Format.Builder b = new Format.Builder()
+                .setSampleMimeType(MimeTypes.VIDEO_H264)
+                .setWidth(f.getInteger(MediaFormat.KEY_WIDTH))
+                .setHeight(f.getInteger(MediaFormat.KEY_HEIGHT))
+                .setInitializationData(init);
+        try {
+            if (f.containsKey(MediaFormat.KEY_FRAME_RATE)) b.setFrameRate(f.getFloat(MediaFormat.KEY_FRAME_RATE));
+        } catch (Exception ignored) { }
+        return b.build();
+    }
+
+    private Format media3AudioFormat(MediaFormat f) throws Exception {
+        ArrayList<byte[]> init = media3InitData(f);
+        return new Format.Builder()
+                .setSampleMimeType(MimeTypes.AUDIO_AAC)
+                .setChannelCount(f.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+                .setSampleRate(f.getInteger(MediaFormat.KEY_SAMPLE_RATE))
+                .setInitializationData(init)
+                .build();
+    }
+
+    private ArrayList<byte[]> media3InitData(MediaFormat f) {
+        ArrayList<byte[]> init = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            try {
+                ByteBuffer csd = f.getByteBuffer("csd-" + i);
+                if (csd == null) continue;
+                ByteBuffer copy = csd.duplicate();
+                copy.position(0);
+                byte[] bytes = new byte[copy.remaining()];
+                copy.get(bytes);
+                if (bytes.length > 0) init.add(bytes);
+            } catch (Exception ignored) { }
+        }
+        return init;
+    }
 
     private void muxWithAndroid(File videoFile, File audioFile, File outputFile) throws Exception {
         MediaExtractor videoExtractor = new MediaExtractor();

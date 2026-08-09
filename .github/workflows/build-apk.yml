@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble verified V2.0.1 release APK
+    name: Assemble verified V2.0.2 release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -40,7 +40,7 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build unsigned V2.0.1 release APK
+      - name: Build unsigned V2.0.2 release APK
         shell: bash
         run: gradle --no-daemon --stacktrace clean assembleRelease
 
@@ -50,8 +50,8 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="artifacts/Rizwan-Media-Saver-V2-v2.0.1-aligned-unsigned.apk"
-          FINAL="artifacts/Rizwan-Media-Saver-V2-v2.0.1-Speed-Playlist.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-V2-v2.0.2-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-V2-v2.0.2-Fast-Finalize.apk"
           test -f "$UNSIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/Rizwan-Media-Saver-V2-v2.0.1-Speed-Playlist.apk"
+          APK="artifacts/Rizwan-Media-Saver-V2-v2.0.2-Fast-Finalize.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
 
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
@@ -83,16 +83,16 @@ jobs:
 
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
           grep -q "package: name='com.rizwan.ytnative.v2preview'" artifacts/APK-BADGING.txt
-          grep -q "versionCode='201'" artifacts/APK-BADGING.txt
-          grep -q "versionName='2.0.1-speed-playlist-preview'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='202'" artifacts/APK-BADGING.txt
+          grep -q "versionName='2.0.2-fast-finalize-preview'" artifacts/APK-BADGING.txt
           grep -q "application-label:'Rizwan Media Saver V2'" artifacts/APK-BADGING.txt
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
           sha256sum "$APK" | tee artifacts/SHA256.txt
 
-      - name: Upload verified V2.0.1 APK
+      - name: Upload verified V2.0.2 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-V2-v2.0.1-Speed-Playlist-Verified-APK
+          name: Rizwan-Media-Saver-V2-v2.0.2-Fast-Finalize-Verified-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 14

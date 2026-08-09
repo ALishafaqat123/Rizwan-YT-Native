@@ -44,9 +44,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.arthenica.ffmpegkit.FFmpegKit;
-import com.arthenica.ffmpegkit.FFmpegSession;
-import com.arthenica.ffmpegkit.ReturnCode;
 
 import com.yausername.ffmpeg.FFmpeg;
 import com.yausername.youtubedl_android.YoutubeDL;
@@ -1422,73 +1419,76 @@ public class V2MainActivity extends Activity {
         File audioFile = findCompleteFile(workDir, "audio.");
         if (audioFile == null || !hasAudioTrack(audioFile.getAbsolutePath())) throw new Exception("AAC audio stream was not created correctly.");
 
-        task.stage = "Native joining video + audio";
+        task.stage = "Joining video + audio";
         task.itemProgress = 95;
         runOnUiThread(() -> {
             progress.setProgress(overallProgress(task, 95));
-            activeTitle.setText(itemPrefix(task) + "Native joining video + audio");
+            activeTitle.setText(itemPrefix(task) + "Joining video + audio");
             setStatus(task.playlistBatch ? playlistStatusLine(task, 95) :
-                    "Joining without re-encoding using the native MP4 engine…");
+                    "Safe finalize • measuring mux, verify, save and cleanup separately…");
             refreshQueueUi();
         });
 
-        File mergedTemp = new File(workDir, "merged-native.mp4");
+        File mergedTemp = new File(workDir, "merged-android.mp4");
         if (mergedTemp.exists() && !mergedTemp.delete()) throw new Exception("Could not replace temporary merged MP4.");
         if (finalFile.exists() && !finalFile.delete()) throw new Exception("Could not replace old final file.");
 
         long finalizeStarted = System.currentTimeMillis();
+
         long muxStarted = System.currentTimeMillis();
-        String muxName = "Native FFmpeg";
-        Exception nativeError = null;
-        try {
-            muxWithNativeFfmpeg(videoFile, audioFile, mergedTemp);
-            if (!mergedTemp.isFile() || mergedTemp.length() <= 0 ||
-                    !hasVideoTrack(mergedTemp.getAbsolutePath()) || !hasAudioTrack(mergedTemp.getAbsolutePath())) {
-                throw new Exception("Native FFmpeg mux verification failed.");
-            }
-        } catch (Exception nativeMuxError) {
-            nativeError = nativeMuxError;
-            if (mergedTemp.exists()) mergedTemp.delete();
-            muxName = "Android fallback";
-            try {
-                muxWithAndroid(videoFile, audioFile, mergedTemp);
-                if (!mergedTemp.isFile() || mergedTemp.length() <= 0 ||
-                        !hasVideoTrack(mergedTemp.getAbsolutePath()) || !hasAudioTrack(mergedTemp.getAbsolutePath())) {
-                    throw new Exception("Android fallback verification failed.");
-                }
-            } catch (Exception fallbackError) {
-                if (mergedTemp.exists()) mergedTemp.delete();
-                throw new Exception("Native and Android mux both failed. Native: " + shortMessage(nativeError), fallbackError);
-            }
-        }
+        muxWithAndroid(videoFile, audioFile, mergedTemp);
         long muxMs = Math.max(0L, System.currentTimeMillis() - muxStarted);
+
+        task.stage = "Verifying merged MP4";
+        task.itemProgress = 97;
+        runOnUiThread(() -> {
+            progress.setProgress(overallProgress(task, 97));
+            activeTitle.setText(itemPrefix(task) + "Verifying merged MP4");
+            setStatus("Mux " + formatElapsedMs(muxMs) + " • checking video + audio tracks…");
+            refreshQueueUi();
+        });
+
+        long verifyStarted = System.currentTimeMillis();
+        if (!mergedTemp.isFile() || mergedTemp.length() <= 0 ||
+                !hasVideoTrack(mergedTemp.getAbsolutePath()) || !hasAudioTrack(mergedTemp.getAbsolutePath())) {
+            if (mergedTemp.exists()) mergedTemp.delete();
+            throw new Exception("Safe Android mux verification failed.");
+        }
+        long verifyMs = Math.max(0L, System.currentTimeMillis() - verifyStarted);
 
         task.stage = "Saving final MP4";
         task.itemProgress = 99;
         runOnUiThread(() -> {
             progress.setProgress(overallProgress(task, 99));
             activeTitle.setText(itemPrefix(task) + "Saving final MP4");
-            setStatus("Join finished in " + formatElapsedMs(muxMs) + " • publishing file…");
+            setStatus("Mux " + formatElapsedMs(muxMs) + " • Verify " + formatElapsedMs(verifyMs) + " • saving…");
             refreshQueueUi();
         });
 
-        long publishStarted = System.currentTimeMillis();
+        long saveStarted = System.currentTimeMillis();
         moveOrCopy(mergedTemp, finalFile);
-        long publishMs = Math.max(0L, System.currentTimeMillis() - publishStarted);
+        long saveMs = Math.max(0L, System.currentTimeMillis() - saveStarted);
+
+        long finalVerifyStarted = System.currentTimeMillis();
         if (!finalFile.isFile() || finalFile.length() <= 0 ||
                 !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
             if (finalFile.exists()) finalFile.delete();
             throw new Exception("Final saved MP4 verification failed.");
         }
+        long finalVerifyMs = Math.max(0L, System.currentTimeMillis() - finalVerifyStarted);
+
+        long cleanupStarted = System.currentTimeMillis();
+        deleteWorkFiles(workDir);
+        long cleanupMs = Math.max(0L, System.currentTimeMillis() - cleanupStarted);
         long finalizeMs = Math.max(0L, System.currentTimeMillis() - finalizeStarted);
 
-        String muxTime = formatElapsedMs(muxMs);
-        String publishTime = formatElapsedMs(publishMs);
-        String totalTime = formatElapsedMs(finalizeMs);
-        lastFinalizeReport = muxName + " • Join " + muxTime + " • Save " + publishTime + " • Total " + totalTime;
+        lastFinalizeReport = "Android MediaMuxer • Mux " + formatElapsedMs(muxMs) +
+                " • Verify " + formatElapsedMs(verifyMs + finalVerifyMs) +
+                " • Save " + formatElapsedMs(saveMs) +
+                " • Cleanup " + formatElapsedMs(cleanupMs) +
+                " • Total " + formatElapsedMs(finalizeMs);
 
-        deleteWorkFiles(workDir);
-        task.stage = "Finalize " + totalTime;
+        task.stage = "Finalize " + formatElapsedMs(finalizeMs);
         task.itemProgress = 100;
         final long finalBytes = finalFile.length();
         final String report = lastFinalizeReport;
@@ -1567,24 +1567,6 @@ public class V2MainActivity extends Activity {
         };
     }
 
-
-    private void muxWithNativeFfmpeg(File videoFile, File audioFile, File outputFile) throws Exception {
-        if (outputFile.exists() && !outputFile.delete()) throw new Exception("Could not replace native mux output.");
-        String command = "-hide_banner -loglevel error -y " +
-                "-i " + ffmpegQuote(videoFile.getAbsolutePath()) + " " +
-                "-i " + ffmpegQuote(audioFile.getAbsolutePath()) + " " +
-                "-map 0:v:0 -map 1:a:0 -c copy -movflags +faststart " +
-                ffmpegQuote(outputFile.getAbsolutePath());
-        FFmpegSession session = FFmpegKit.execute(command);
-        if (session == null || !ReturnCode.isSuccess(session.getReturnCode())) {
-            String code = session == null || session.getReturnCode() == null ? "unknown" : session.getReturnCode().toString();
-            throw new Exception("Native FFmpeg remux failed (code " + code + ").");
-        }
-    }
-
-    private String ffmpegQuote(String value) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-    }
 
     private void muxWithAndroid(File videoFile, File audioFile, File outputFile) throws Exception {
         MediaExtractor videoExtractor = new MediaExtractor();

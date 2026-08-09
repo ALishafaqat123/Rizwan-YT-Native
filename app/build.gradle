@@ -10,8 +10,8 @@ android {
         applicationId 'com.rizwan.ytnative.v2preview'
         minSdk 24
         targetSdk 27
-        versionCode 201
-        versionName '2.0.1-speed-playlist-preview'
+        versionCode 202
+        versionName '2.0.2-fast-finalize-preview'
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -48,4 +48,5 @@ android {
 dependencies {
     implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
     implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
+    implementation 'androidx.media3:media3-muxer:1.10.1'
 }

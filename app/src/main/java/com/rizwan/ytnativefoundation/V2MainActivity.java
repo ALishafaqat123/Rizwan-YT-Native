@@ -98,6 +98,7 @@ public class V2MainActivity extends Activity {
     private final ArrayList<DownloadTask> queue = new ArrayList<>();
     private final LruCache<String, Bitmap> thumbnailCache = new LruCache<>(36);
     private final ConcurrentHashMap<String, VideoInfo> infoCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, VideoInfo> combinedAndroidInfoCache = new ConcurrentHashMap<>();
 
     private EditText linkInput;
     private Button goButton;
@@ -1192,6 +1193,23 @@ public class V2MainActivity extends Activity {
         return info;
     }
 
+    private VideoInfo getAndroidCombinedInfo(String url) throws Exception {
+        String id = getYoutubeId(url);
+        String key = id == null || id.isEmpty() ? url : id;
+        VideoInfo cached = combinedAndroidInfoCache.get(key);
+        if (cached != null) return cached;
+
+        YoutubeDLRequest request = new YoutubeDLRequest(url);
+        request.addOption("--no-playlist");
+        request.addOption("--force-ipv4");
+        request.addOption("--remote-components", "ejs:github");
+        request.addOption("--js-runtimes", "quickjs");
+        request.addOption("--extractor-args", "youtube:player_client=android;formats=missing_pot");
+        VideoInfo info = YoutubeDL.getInstance().getInfo(request);
+        if (info != null) combinedAndroidInfoCache.put(key, info);
+        return info;
+    }
+
     private void enqueueSingle(String url, String title, int quality, int audioKbps) {
         DownloadTask task = new DownloadTask();
         task.id = getYoutubeId(url);
@@ -1358,34 +1376,70 @@ public class V2MainActivity extends Activity {
             combined = findExactCombinedFormat(info, task.quality);
         } catch (Exception ignored) { }
 
+        String combinedExtractorArgs = null;
+        String combinedSource = "Default client";
+        // yt-dlp no longer includes the Android client in every default-client set.
+        // Android has historically exposed progressive 720p MP4 (itag 22) on videos
+        // where the web/default clients only expose separate adaptive streams.
+        if (combined == null && task.quality == 720) {
+            try {
+                task.stage = "Checking Android 720p fast stream";
+                runOnUiThread(() -> {
+                    activeTitle.setText(itemPrefix(task) + "Checking no-mux 720p stream");
+                    setStatus(task.playlistBatch ? playlistStatusLine(task, 1) :
+                            "Checking Android progressive MP4 before separate video + audio…");
+                    refreshQueueUi();
+                });
+                VideoInfo androidInfo = getAndroidCombinedInfo(task.url);
+                VideoFormat androidCombined = findExactCombinedFormat(androidInfo, 720);
+                if (androidCombined != null) {
+                    combined = androidCombined;
+                    combinedExtractorArgs = "youtube:player_client=android;formats=missing_pot";
+                    combinedSource = "Android progressive";
+                }
+            } catch (Exception ignored) { }
+        }
+
         if (combined != null && combined.getFormatId() != null && !combined.getFormatId().trim().isEmpty()) {
             if (finalFile.exists() && !finalFile.delete()) throw new Exception("Could not replace old final file.");
             File fastPart = new File(finalFile.getAbsolutePath() + ".part");
             if (fastPart.exists()) fastPart.delete();
             String fastPid = "rms-fast-combined-" + safeId + "-" + task.quality;
             processId = fastPid;
-            YoutubeDLRequest fastReq = commonRequest(task.url);
-            fastReq.addOption("-f", combined.getFormatId());
+            final String fastSource = combinedSource;
+            final String fastFormatId = combined.getFormatId();
+            YoutubeDLRequest fastReq = combinedExtractorArgs == null
+                    ? commonRequest(task.url)
+                    : commonRequest(task.url, combinedExtractorArgs);
+            fastReq.addOption("-f", fastFormatId);
             fastReq.addOption("-o", finalFile.getAbsolutePath());
             try {
                 YoutubeDL.getInstance().execute(fastReq, fastPid,
                         progressCallback(1, 99, "Downloading ready-made " + task.quality + "p MP4"));
                 processId = null;
                 if (cancelCurrent) throw new Exception("Canceled");
+                long fastFinalizeStarted = System.currentTimeMillis();
+                long fastVerifyStarted = System.currentTimeMillis();
                 if (!finalFile.isFile() || finalFile.length() <= 0 ||
                         !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
                     throw new Exception("Combined MP4 verification failed.");
                 }
+                long fastVerifyMs = Math.max(0L, System.currentTimeMillis() - fastVerifyStarted);
                 deleteWorkFiles(workDir);
+                long fastFinalizeMs = Math.max(0L, System.currentTimeMillis() - fastFinalizeStarted);
+                lastFinalizeReport = fastSource + " combined • format " + fastFormatId +
+                        " • Mux 0 ms • Verify " + formatElapsedMs(fastVerifyMs) +
+                        " • Total " + formatElapsedMs(fastFinalizeMs);
                 task.stage = "Completed • no joining needed";
                 task.itemProgress = 100;
                 final long finalBytes = finalFile.length();
+                final String fastReport = lastFinalizeReport;
                 runOnUiThread(() -> {
                     progress.setProgress(overallProgress(task, 100));
                     activeTitle.setText(itemPrefix(task) + "Completed • no joining needed");
                     activeMeta.setText(task.title + " • " + formatBytes(finalBytes));
-                    setStatus(task.playlistBatch ? playlistStatusLine(task, 100) + "\nNo joining needed." :
-                            "Ready-made video+audio MP4 used • no joining needed.");
+                    setStatus(task.playlistBatch ? playlistStatusLine(task, 100) + "\n" + fastReport : fastReport);
+                    Toast.makeText(this, "No joining needed", Toast.LENGTH_SHORT).show();
                     refreshQueueUi();
                 });
                 return;
@@ -1531,6 +1585,10 @@ public class V2MainActivity extends Activity {
     }
 
     private YoutubeDLRequest commonRequest(String url) {
+        return commonRequest(url, "youtube:player_client=default,-android_sdkless;formats=missing_pot");
+    }
+
+    private YoutubeDLRequest commonRequest(String url, String extractorArgs) {
         YoutubeDLRequest request = new YoutubeDLRequest(url);
         request.addOption("--no-playlist");
         request.addOption("--no-mtime");
@@ -1542,7 +1600,7 @@ public class V2MainActivity extends Activity {
         request.addOption("--force-ipv4");
         request.addOption("--remote-components", "ejs:github");
         request.addOption("--js-runtimes", "quickjs");
-        request.addOption("--extractor-args", "youtube:player_client=default,-android_sdkless;formats=missing_pot");
+        request.addOption("--extractor-args", extractorArgs);
         return request;
     }
 

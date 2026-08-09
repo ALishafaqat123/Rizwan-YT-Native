@@ -1,0 +1,30 @@
+name: Apply V2.0.1 Speed Playlist Patch
+
+on:
+  push:
+    branches: [ "v2-ui-rebuild" ]
+    paths:
+      - ".github/workflows/apply-v201-speed-playlist.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-ui-rebuild
+      - name: Apply V2.0.1 source patch
+        run: python .github/scripts/apply-v201-speed-playlist.py
+      - name: Commit patched source
+        shell: bash
+        run: |
+          set -e
+          git config user.name "Rizwan Media Saver CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/rizwan/ytnativefoundation/V2MainActivity.java
+          git diff --cached --quiet && exit 0
+          git commit -m "Improve V2 speed, direct mux and playlist cards"
+          git push origin HEAD:v2-ui-rebuild

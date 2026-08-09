@@ -48,8 +48,8 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="artifacts/Rizwan-Media-Saver-v1.7.0-aligned-unsigned.apk"
-          FINAL="artifacts/Rizwan-Media-Saver-v1.7.0-ui-foundation.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-v1.8.0-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-v1.8.0-smart.apk"
           test -f "$UNSIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="artifacts/Rizwan-Media-Saver-v1.7.0-ui-foundation.apk"
+          APK="artifacts/Rizwan-Media-Saver-v1.8.0-smart.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
 
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
@@ -81,8 +81,8 @@ jobs:
 
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
           grep -q "package: name='com.rizwan.ytnative'" artifacts/APK-BADGING.txt
-          grep -q "versionCode='170'" artifacts/APK-BADGING.txt
-          grep -q "versionName='1.7.0-ui-foundation'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='180'" artifacts/APK-BADGING.txt
+          grep -q "versionName='1.8.0-smart-clipboard-playlist-queue'" artifacts/APK-BADGING.txt
           grep -q "application-label:'Rizwan Media Saver'" artifacts/APK-BADGING.txt
           grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
           sha256sum "$APK" | tee artifacts/SHA256.txt
@@ -90,7 +90,7 @@ jobs:
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-v1.7.0-UI-Foundation-Verified-APK
+          name: Rizwan-Media-Saver-v1.8.0-Smart-Verified-APK
           path: artifacts/
           if-no-files-found: error
           retention-days: 14

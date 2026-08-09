@@ -29,3 +29,5 @@ jobs:
           git add -A
           git commit -m "Release v1.8.2 progress and playlist UI polish"
           git push origin HEAD:main
+
+# one-time trigger

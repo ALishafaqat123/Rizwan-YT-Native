@@ -318,10 +318,10 @@ public class FastSmartMainActivity extends Activity {
         sub.setPadding(0, dp(4), 0, dp(16));
         root.addView(sub);
 
-        TextView qh = sectionTitle("Queue");
+        TextView qh = sectionTitle("Active & Queue");
         qh.setTextSize(17);
         root.addView(qh);
-        queueSummary = smallText("No queued items");
+        queueSummary = smallText("No active or queued items");
         queueSummary.setPadding(0, dp(4), 0, dp(9));
         root.addView(queueSummary);
         queueContainer = new LinearLayout(this);
@@ -769,11 +769,16 @@ public class FastSmartMainActivity extends Activity {
                 .setSingleChoiceItems(options, 1, (d, which) -> chosen[0] = which)
                 .setPositiveButton("Add to queue", (d, w) -> {
                     ArrayList<DownloadTask> tasks = new ArrayList<>();
-                    for (PlaylistEntry e : selected) {
+                    int total = selected.size();
+                    for (int i = 0; i < selected.size(); i++) {
+                        PlaylistEntry e = selected.get(i);
                         DownloadTask task = new DownloadTask();
                         task.id = e.id;
                         task.title = e.title;
                         task.url = e.url;
+                        task.batchIndex = i + 1;
+                        task.batchTotal = total;
+                        task.playlistBatch = total > 1;
                         if (chosen[0] == 3) {
                             task.quality = 0;
                             task.audioKbps = 999;
@@ -782,6 +787,8 @@ public class FastSmartMainActivity extends Activity {
                             task.audioKbps = 0;
                         }
                         task.status = "WAITING";
+                        task.stage = "Waiting";
+                        task.itemProgress = 0;
                         tasks.add(task);
                     }
                     enqueueTasks(tasks);
@@ -809,6 +816,10 @@ public class FastSmartMainActivity extends Activity {
         task.quality = quality;
         task.audioKbps = audioKbps;
         task.status = "WAITING";
+        task.stage = "Waiting";
+        task.itemProgress = 0;
+        task.batchIndex = 1;
+        task.batchTotal = 1;
         ArrayList<DownloadTask> tasks = new ArrayList<>();
         tasks.add(task);
         enqueueTasks(tasks);
@@ -832,18 +843,25 @@ public class FastSmartMainActivity extends Activity {
             currentTask = task;
             cancelCurrent = false;
             task.status = "DOWNLOADING";
+            task.stage = task.audioKbps > 0 ? "Downloading audio" :
+                    (task.quality <= 360 ? "Downloading video + audio" : "Downloading video");
+            task.itemProgress = 0;
             runOnUiThread(() -> {
-                activeTitle.setText(task.audioKbps > 0 ? "Downloading audio" : "Downloading " + task.quality + "p");
+                activeTitle.setText(itemPrefix(task) + task.stage);
                 activeMeta.setText(task.title);
-                progress.setProgress(0);
+                progress.setProgress(overallProgress(task, 0));
+                setStatus(task.playlistBatch ? playlistStatusLine(task, 0) : "Starting download…");
                 refreshQueueUi();
             });
             try {
                 downloadTaskBlocking(task);
                 task.status = cancelCurrent ? "CANCELED" : "COMPLETED";
+                task.stage = cancelCurrent ? "Canceled" : "Completed";
+                task.itemProgress = cancelCurrent ? task.itemProgress : 100;
             } catch (Exception e) {
                 task.error = shortMessage(e);
                 task.status = cancelCurrent ? "CANCELED" : "FAILED";
+                task.stage = cancelCurrent ? "Canceled" : "Failed";
             } finally {
                 processId = null;
                 currentTask = null;
@@ -858,7 +876,7 @@ public class FastSmartMainActivity extends Activity {
         runOnUiThread(() -> {
             activeTitle.setText("Queue finished");
             activeMeta.setText("");
-            progress.setProgress(0);
+            progress.setProgress(100);
             setStatus("All queued items have been processed.");
             refreshQueueUi();
             refreshCompletedUi();
@@ -870,6 +888,24 @@ public class FastSmartMainActivity extends Activity {
             for (DownloadTask t : queue) if ("WAITING".equals(t.status)) return t;
         }
         return null;
+    }
+
+    private String itemPrefix(DownloadTask task) {
+        return task != null && task.batchTotal > 1
+                ? "Item " + task.batchIndex + "/" + task.batchTotal + " • " : "";
+    }
+
+    private int overallProgress(DownloadTask task, int itemProgress) {
+        int p = Math.max(0, Math.min(100, itemProgress));
+        if (task == null || task.batchTotal <= 1) return p;
+        return Math.max(0, Math.min(100,
+                ((task.batchIndex - 1) * 100 + p) / task.batchTotal));
+    }
+
+    private String playlistStatusLine(DownloadTask task, int itemProgress) {
+        int overall = overallProgress(task, itemProgress);
+        return "Playlist " + task.batchIndex + "/" + task.batchTotal +
+                " • current item " + itemProgress + "% • overall " + overall + "%";
     }
 
     private void downloadTaskBlocking(DownloadTask task) throws Exception {
@@ -942,9 +978,14 @@ public class FastSmartMainActivity extends Activity {
         File audioFile = findCompleteFile(workDir, "audio.");
         if (audioFile == null || !hasAudioTrack(audioFile.getAbsolutePath())) throw new Exception("AAC audio stream was not created correctly.");
 
+        task.stage = "Joining video + audio";
+        task.itemProgress = 96;
         runOnUiThread(() -> {
-            progress.setProgress(96);
-            setStatus("Joining video + audio with Android MediaMuxer...");
+            progress.setProgress(overallProgress(task, 96));
+            activeTitle.setText(itemPrefix(task) + "Joining video + audio");
+            setStatus(task.playlistBatch ? playlistStatusLine(task, 96) :
+                    "Joining video + audio with Android MediaMuxer…");
+            refreshQueueUi();
         });
         if (mergedTemp.exists()) mergedTemp.delete();
         muxWithAndroid(videoFile, audioFile, mergedTemp);
@@ -958,7 +999,14 @@ public class FastSmartMainActivity extends Activity {
             throw new Exception("Final saved MP4 verification failed.");
         }
         deleteWorkFiles(workDir);
-        runOnUiThread(() -> progress.setProgress(100));
+        task.stage = "Finalizing";
+        task.itemProgress = 100;
+        runOnUiThread(() -> {
+            progress.setProgress(overallProgress(task, 100));
+            activeTitle.setText(itemPrefix(task) + "Finalizing");
+            setStatus(task.playlistBatch ? playlistStatusLine(task, 100) : "Final MP4 verified.");
+            refreshQueueUi();
+        });
     }
 
     private YoutubeDLRequest commonRequest(String url) {
@@ -979,14 +1027,28 @@ public class FastSmartMainActivity extends Activity {
         return (pct, eta, line) -> {
             float raw = pct == null || pct < 0 ? 0 : Math.min(100f, pct);
             int scaled = start + Math.round((end - start) * (raw / 100f));
+            int itemProgress = Math.max(start, Math.min(end, scaled));
             String safeLine = line == null ? "" : line;
             String lower = safeLine.toLowerCase(Locale.US);
             boolean resuming = lower.contains("resuming download") || lower.contains("resume at") || lower.contains("continuing at");
+            DownloadTask task = currentTask;
+            if (task != null) {
+                task.stage = resuming ? "Resuming previous download" : label;
+                task.itemProgress = itemProgress;
+            }
             runOnUiThread(() -> {
-                progress.setProgress(Math.max(start, Math.min(end, scaled)));
+                DownloadTask active = currentTask;
+                int shownProgress = active == null ? itemProgress : overallProgress(active, itemProgress);
+                progress.setProgress(shownProgress);
                 String etaText = eta != null && eta >= 0 ? " • ETA " + eta + "s" : "";
-                activeTitle.setText(resuming ? "Resuming previous download" : label);
-                setStatus(Math.round(raw) + "%" + etaText + "\n" + safeLine);
+                String stage = resuming ? "Resuming previous download" : label;
+                activeTitle.setText((active == null ? "" : itemPrefix(active)) + stage);
+                if (active != null && active.playlistBatch) {
+                    setStatus(playlistStatusLine(active, itemProgress) + etaText + "\n" + safeLine);
+                } else {
+                    setStatus(Math.round(raw) + "%" + etaText + "\n" + safeLine);
+                }
+                refreshQueueUi();
             });
             return Unit.INSTANCE;
         };
@@ -1116,13 +1178,21 @@ public class FastSmartMainActivity extends Activity {
         queueContainer.removeAllViews();
         ArrayList<DownloadTask> snap;
         synchronized (queue) { snap = new ArrayList<>(queue); }
-        int waiting = 0, failed = 0, active = 0;
+        int waiting = 0, failed = 0, active = 0, completed = 0;
         for (DownloadTask t : snap) {
             if ("WAITING".equals(t.status)) waiting++;
             else if ("FAILED".equals(t.status)) failed++;
             else if ("DOWNLOADING".equals(t.status)) active++;
+            else if ("COMPLETED".equals(t.status)) completed++;
         }
-        queueSummary.setText(active + " active • " + waiting + " waiting • " + failed + " failed");
+        if (snap.size() > 1) {
+            queueSummary.setText(completed + "/" + snap.size() + " completed • " +
+                    active + " active • " + waiting + " waiting" +
+                    (failed > 0 ? " • " + failed + " failed" : ""));
+        } else {
+            queueSummary.setText(active + " active • " + waiting + " waiting" +
+                    (failed > 0 ? " • " + failed + " failed" : ""));
+        }
         int shown = 0;
         for (DownloadTask t : snap) {
             if ("COMPLETED".equals(t.status)) continue;
@@ -1134,16 +1204,30 @@ public class FastSmartMainActivity extends Activity {
             if (shown++ > 0) lp.topMargin = dp(7);
             queueContainer.addView(card, lp);
             TextView name = new TextView(this);
-            name.setText(t.title);
+            name.setText((t.batchTotal > 1 ? t.batchIndex + "/" + t.batchTotal + "  " : "") + t.title);
             name.setTextColor(TEXT);
             name.setTextSize(14);
             name.setTypeface(Typeface.DEFAULT_BOLD);
             name.setMaxLines(2);
             card.addView(name);
             String mode = t.audioKbps > 0 ? "Audio only" : t.quality + "p video";
-            TextView meta = smallText(mode + " • " + t.status + (t.error == null ? "" : "\n" + t.error));
+            String stage = t.stage == null ? t.status : t.stage;
+            TextView meta = smallText(mode + " • " + stage + (t.error == null ? "" : "\n" + t.error));
             meta.setPadding(0, dp(4), 0, 0);
             card.addView(meta);
+            if ("DOWNLOADING".equals(t.status)) {
+                ProgressBar itemBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                itemBar.setMax(100);
+                itemBar.setProgress(Math.max(0, Math.min(100, t.itemProgress)));
+                LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, dp(8));
+                bp.topMargin = dp(8);
+                card.addView(itemBar, bp);
+                TextView pct = smallText(t.itemProgress + "% of current item" +
+                        (t.batchTotal > 1 ? " • playlist overall " + overallProgress(t, t.itemProgress) + "%" : ""));
+                pct.setPadding(0, dp(4), 0, 0);
+                card.addView(pct);
+            }
         }
         if (shown == 0) queueContainer.addView(smallText("No active or waiting items."));
     }
@@ -1464,6 +1548,11 @@ public class FastSmartMainActivity extends Activity {
         int audioKbps;
         String status;
         String error;
+        String stage;
+        int itemProgress;
+        int batchIndex = 1;
+        int batchTotal = 1;
+        boolean playlistBatch = false;
     }
 
     private static class OptionRow {

@@ -28,6 +28,10 @@ jobs:
         shell: bash
         run: python3 tools/apply_v208_mp4parser.py
 
+      - name: Add MP4Parser muxer dependency
+        shell: bash
+        run: python3 tools/add_v208_muxer_dependency.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

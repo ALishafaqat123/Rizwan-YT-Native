@@ -7,6 +7,7 @@ import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -22,11 +23,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.text.InputType;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
+import android.widget.BaseAdapter;
+import android.widget.CheckBox;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -63,6 +68,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -81,9 +87,13 @@ public class V2MainActivity extends Activity {
     private static final int DARK = Color.rgb(24, 30, 27);
     private static final int BORDER = Color.rgb(224, 230, 227);
 
+    private static final long YTDLP_UPDATE_INTERVAL_MS = 24L * 60L * 60L * 1000L;
     private final ExecutorService metadataExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService imageExecutor = Executors.newFixedThreadPool(3);
     private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor();
     private final ArrayList<DownloadTask> queue = new ArrayList<>();
+    private final LruCache<String, Bitmap> thumbnailCache = new LruCache<>(36);
+    private final ConcurrentHashMap<String, VideoInfo> infoCache = new ConcurrentHashMap<>();
 
     private EditText linkInput;
     private Button goButton;
@@ -471,24 +481,37 @@ public class V2MainActivity extends Activity {
             try {
                 YoutubeDL.getInstance().init(getApplicationContext());
                 try { FFmpeg.getInstance().init(getApplicationContext()); } catch (Exception ignored) { }
-                String note;
+
+                SharedPreferences prefs = getSharedPreferences("rms_v2_engine", MODE_PRIVATE);
+                long now = System.currentTimeMillis();
+                long lastUpdate = prefs.getLong("last_yt_dlp_update", 0L);
                 String before = YoutubeDL.getInstance().versionName(getApplicationContext());
-                try {
-                    YoutubeDL.UpdateStatus us = YoutubeDL.getInstance().updateYoutubeDL(
-                            getApplicationContext(), YoutubeDL.UpdateChannel._NIGHTLY);
-                    String after = YoutubeDL.getInstance().versionName(getApplicationContext());
-                    note = "yt-dlp " + (after == null ? "updated" : after) + " • " +
-                            (us == null ? "checked" : us.toString());
-                } catch (Exception e) {
+                String note;
+
+                if (lastUpdate <= 0L || now - lastUpdate >= YTDLP_UPDATE_INTERVAL_MS) {
+                    try {
+                        YoutubeDL.UpdateStatus us = YoutubeDL.getInstance().updateYoutubeDL(
+                                getApplicationContext(), YoutubeDL.UpdateChannel._NIGHTLY);
+                        String after = YoutubeDL.getInstance().versionName(getApplicationContext());
+                        note = "yt-dlp " + (after == null ? "updated" : after) + " • " +
+                                (us == null ? "checked" : us.toString());
+                        prefs.edit().putLong("last_yt_dlp_update", now).apply();
+                    } catch (Exception e) {
+                        String current = YoutubeDL.getInstance().versionName(getApplicationContext());
+                        note = "Using " + (current != null ? current : (before != null ? before : "bundled yt-dlp"));
+                    }
+                } else {
                     String current = YoutubeDL.getInstance().versionName(getApplicationContext());
-                    note = "Using " + (current != null ? current : (before != null ? before : "bundled yt-dlp"));
+                    note = "yt-dlp " + (current != null ? current : "ready") + " • cached startup";
                 }
+
                 final String n = note;
                 engineReady = true;
                 runOnUiThread(() -> {
                     goButton.setEnabled(true);
                     activeTitle.setText("Ready");
-                    setStatus(n + "\nAndroid MediaMuxer ready for HD.");
+                    setStatus(n + "
+Fast V2 engine • Android MediaMuxer ready.");
                     if (pendingClipboardUrl != null) {
                         String p = pendingClipboardUrl;
                         pendingClipboardUrl = null;
@@ -919,6 +942,7 @@ public class V2MainActivity extends Activity {
         request.addOption("--skip-download");
         request.addOption("--yes-playlist");
         request.addOption("--force-ipv4");
+        request.addOption("--extractor-args", "youtubetab:skip=webpage");
         YoutubeDLResponse response = YoutubeDL.getInstance().execute(request, null, null);
         String json = response.getOut();
         int a = json == null ? -1 : json.indexOf('{');
@@ -927,6 +951,7 @@ public class V2MainActivity extends Activity {
         JSONObject root = new JSONObject(json.substring(a, b + 1));
         PlaylistResult result = new PlaylistResult();
         result.title = root.optString("title", "YouTube playlist");
+        result.thumbnail = root.optString("thumbnail", "");
         JSONArray entries = root.optJSONArray("entries");
         if (entries == null) return result;
         for (int i = 0; i < entries.length(); i++) {
@@ -938,6 +963,7 @@ public class V2MainActivity extends Activity {
             item.id = id;
             item.title = e.optString("title", "Video " + (i + 1));
             item.thumbnail = e.optString("thumbnail", "");
+            item.duration = e.optInt("duration", 0);
             String webpage = e.optString("webpage_url", "");
             item.url = webpage.startsWith("http") ? webpage : "https://www.youtube.com/watch?v=" + id;
             result.entries.add(item);
@@ -947,8 +973,8 @@ public class V2MainActivity extends Activity {
 
     private void showPlaylistSelection(PlaylistResult playlist) {
         int n = playlist.entries.size();
-        String[] labels = new String[n];
-        for (int i = 0; i < n; i++) labels[i] = (i + 1) + ".  " + playlist.entries.get(i).title;
+        boolean[] checked = new boolean[n];
+        for (int i = 0; i < n; i++) checked[i] = true;
 
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -963,21 +989,46 @@ public class V2MainActivity extends Activity {
         handle.setTextSize(24);
         handle.setGravity(Gravity.CENTER);
         sheet.addView(handle);
-        TextView title = sectionTitle(playlist.title == null ? "Playlist" : playlist.title);
-        title.setTextSize(19);
+
+        LinearLayout playlistHead = new LinearLayout(this);
+        playlistHead.setOrientation(LinearLayout.HORIZONTAL);
+        playlistHead.setGravity(Gravity.CENTER_VERTICAL);
+        playlistHead.setPadding(0, dp(4), 0, dp(12));
+        sheet.addView(playlistHead, fullWrap());
+
+        ImageView cover = new ImageView(this);
+        cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        cover.setBackground(roundBg(SURFACE_2, BORDER, 12));
+        playlistHead.addView(cover, new LinearLayout.LayoutParams(dp(106), dp(66)));
+
+        LinearLayout headText = new LinearLayout(this);
+        headText.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams htp = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        htp.leftMargin = dp(12);
+        playlistHead.addView(headText, htp);
+
+        TextView title = sectionTitle(playlist.title == null || playlist.title.trim().isEmpty()
+                ? "YouTube playlist" : playlist.title);
+        title.setTextSize(18);
         title.setMaxLines(2);
-        sheet.addView(title);
+        headText.addView(title);
         TextView selectedText = smallText(n + " of " + n + " videos selected");
-        selectedText.setPadding(0, dp(4), 0, dp(9));
-        sheet.addView(selectedText);
+        selectedText.setPadding(0, dp(5), 0, 0);
+        headText.addView(selectedText);
+
+        String playlistCover = playlist.thumbnail;
+        if ((playlistCover == null || !playlistCover.startsWith("http")) && !playlist.entries.isEmpty()) {
+            PlaylistEntry first = playlist.entries.get(0);
+            playlistCover = first.thumbnail != null && first.thumbnail.startsWith("http")
+                    ? first.thumbnail : "https://i.ytimg.com/vi/" + first.id + "/mqdefault.jpg";
+        }
+        if (playlistCover != null && playlistCover.startsWith("http")) loadThumbnailAsync(playlistCover, cover);
 
         ListView list = new ListView(this);
-        list.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
         list.setDividerHeight(0);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_list_item_multiple_choice, labels);
-        list.setAdapter(adapter);
-        for (int i = 0; i < n; i++) list.setItemChecked(i, true);
+        list.setClipToPadding(false);
+        list.setPadding(0, 0, 0, dp(4));
         sheet.addView(list, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -986,41 +1037,49 @@ public class V2MainActivity extends Activity {
         tools.setGravity(Gravity.CENTER_VERTICAL);
         tools.setPadding(0, dp(8), 0, 0);
         sheet.addView(tools, fullWrap());
+
         Button all = new Button(this);
         all.setText("Clear all");
         all.setAllCaps(false);
         all.setTextColor(TEXT);
+        all.setTypeface(Typeface.DEFAULT_BOLD);
         all.setBackground(roundBg(SURFACE_2, BORDER, 14));
-        tools.addView(all, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        tools.addView(all, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
         Button next = new Button(this);
         next.setText("Continue • " + n);
         next.setAllCaps(false);
         next.setTextColor(Color.WHITE);
         next.setTypeface(Typeface.DEFAULT_BOLD);
         next.setBackground(roundBg(ACCENT, ACCENT, 14));
-        LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(0, dp(48), 1f);
         np.leftMargin = dp(8);
         tools.addView(next, np);
 
         Runnable update = () -> {
             int c = 0;
-            for (int i = 0; i < n; i++) if (list.isItemChecked(i)) c++;
+            for (boolean value : checked) if (value) c++;
             selectedText.setText(c + " of " + n + " videos selected");
             next.setText("Continue • " + c);
             next.setEnabled(c > 0);
             all.setText(c == n ? "Clear all" : "Select all");
         };
-        list.setOnItemClickListener((p, v, position, id) -> update.run());
+
+        PlaylistAdapter adapter = new PlaylistAdapter(playlist.entries, checked, update);
+        list.setAdapter(adapter);
+
         all.setOnClickListener(v -> {
             int c = 0;
-            for (int i = 0; i < n; i++) if (list.isItemChecked(i)) c++;
+            for (boolean value : checked) if (value) c++;
             boolean select = c != n;
-            for (int i = 0; i < n; i++) list.setItemChecked(i, select);
+            for (int i = 0; i < n; i++) checked[i] = select;
+            adapter.notifyDataSetChanged();
             update.run();
         });
+
         next.setOnClickListener(v -> {
             ArrayList<PlaylistEntry> selected = new ArrayList<>();
-            for (int i = 0; i < n; i++) if (list.isItemChecked(i)) selected.add(playlist.entries.get(i));
+            for (int i = 0; i < n; i++) if (checked[i]) selected.add(playlist.entries.get(i));
             if (selected.isEmpty()) return;
             dialog.dismiss();
             showPlaylistQualityChooser(selected);
@@ -1035,12 +1094,12 @@ public class V2MainActivity extends Activity {
         dialog.show();
         if (dialog.getWindow() != null) {
             dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT,
-                    Math.min(getResources().getDisplayMetrics().heightPixels * 88 / 100, dp(820)));
+                    Math.min(getResources().getDisplayMetrics().heightPixels * 90 / 100, dp(850)));
             dialog.getWindow().setGravity(Gravity.BOTTOM);
         }
         sheet.setTranslationY(dp(30));
         sheet.setAlpha(0f);
-        sheet.animate().translationY(0f).alpha(1f).setDuration(180).start();
+        sheet.animate().translationY(0f).alpha(1f).setDuration(170).start();
     }
 
     private void showPlaylistQualityChooser(ArrayList<PlaylistEntry> selected) {
@@ -1113,13 +1172,20 @@ public class V2MainActivity extends Activity {
     }
 
     private VideoInfo getSingleInfo(String url) throws Exception {
+        String id = getYoutubeId(url);
+        String key = id == null || id.isEmpty() ? url : id;
+        VideoInfo cached = infoCache.get(key);
+        if (cached != null) return cached;
+
         YoutubeDLRequest request = new YoutubeDLRequest(url);
         request.addOption("--no-playlist");
         request.addOption("--force-ipv4");
         request.addOption("--remote-components", "ejs:github");
         request.addOption("--js-runtimes", "quickjs");
         request.addOption("--extractor-args", "youtube:player_client=default,-android_sdkless;formats=missing_pot");
-        return YoutubeDL.getInstance().getInfo(request);
+        VideoInfo info = YoutubeDL.getInstance().getInfo(request);
+        if (info != null) infoCache.put(key, info);
+        return info;
     }
 
     private void enqueueSingle(String url, String title, int quality, int audioKbps) {
@@ -1266,7 +1332,6 @@ public class V2MainActivity extends Activity {
         File workRoot = new File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "hd-work");
         File workDir = new File(workRoot, safeId + "-" + task.quality + "p");
         if (!workDir.exists()) workDir.mkdirs();
-        File mergedTemp = new File(workDir, "merged-final.mp4");
         File finalFile = new File(outDir, safeFileTitle(task.title) + " [" + safeId + "] [" + task.quality + "p].mp4");
 
         String videoPid = "rms-hd-video-" + safeId + "-" + task.quality;
@@ -1299,19 +1364,19 @@ public class V2MainActivity extends Activity {
             progress.setProgress(overallProgress(task, 96));
             activeTitle.setText(itemPrefix(task) + "Joining video + audio");
             setStatus(task.playlistBatch ? playlistStatusLine(task, 96) :
-                    "Joining video + audio with Android MediaMuxer…");
+                    "Joining directly to final MP4…");
             refreshQueueUi();
         });
-        if (mergedTemp.exists()) mergedTemp.delete();
-        muxWithAndroid(videoFile, audioFile, mergedTemp);
-        if (!mergedTemp.isFile() || mergedTemp.length() <= 0 || !hasVideoTrack(mergedTemp.getAbsolutePath()) || !hasAudioTrack(mergedTemp.getAbsolutePath())) {
-            throw new Exception("Android MediaMuxer verification failed.");
-        }
         if (finalFile.exists() && !finalFile.delete()) throw new Exception("Could not replace old final file.");
-        moveOrCopy(mergedTemp, finalFile);
-        if (!finalFile.isFile() || !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
+        try {
+            muxWithAndroid(videoFile, audioFile, finalFile);
+            if (!finalFile.isFile() || finalFile.length() <= 0 ||
+                    !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
+                throw new Exception("Final saved MP4 verification failed.");
+            }
+        } catch (Exception muxError) {
             if (finalFile.exists()) finalFile.delete();
-            throw new Exception("Final saved MP4 verification failed.");
+            throw muxError;
         }
         deleteWorkFiles(workDir);
         task.stage = "Finalizing";
@@ -1331,6 +1396,8 @@ public class V2MainActivity extends Activity {
         request.addOption("--newline");
         request.addOption("--progress");
         request.addOption("--continue");
+        request.addOption("--concurrent-fragments", "4");
+        request.addOption("--http-chunk-size", "10M");
         request.addOption("--force-ipv4");
         request.addOption("--remote-components", "ejs:github");
         request.addOption("--js-runtimes", "quickjs");
@@ -1399,7 +1466,7 @@ public class V2MainActivity extends Activity {
             muxer.start();
             started = true;
             int bufferSize = Math.max(8 * 1024 * 1024, Math.max(maxInputSize(vf), maxInputSize(af)) + 1024);
-            ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+            ByteBuffer buffer = ByteBuffer.allocateDirect(bufferSize);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             long vt = videoExtractor.getSampleTime();
             long at = audioExtractor.getSampleTime();
@@ -1707,10 +1774,23 @@ public class V2MainActivity extends Activity {
     }
 
     private void loadThumbnailAsync(String url, ImageView image) {
-        metadataExecutor.execute(() -> {
+        if (url == null || url.trim().isEmpty() || image == null) return;
+        Bitmap cached = thumbnailCache.get(url);
+        image.setTag(url);
+        if (cached != null) {
+            image.setImageBitmap(cached);
+            return;
+        }
+        imageExecutor.execute(() -> {
             try {
                 Bitmap b = loadBitmap(url);
-                if (b != null) runOnUiThread(() -> image.setImageBitmap(b));
+                if (b != null) {
+                    thumbnailCache.put(url, b);
+                    runOnUiThread(() -> {
+                        Object tag = image.getTag();
+                        if (tag != null && url.equals(tag.toString())) image.setImageBitmap(b);
+                    });
+                }
             } catch (Exception ignored) { }
         });
     }
@@ -1918,8 +1998,111 @@ public class V2MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         metadataExecutor.shutdownNow();
+        imageExecutor.shutdownNow();
         downloadExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    private class PlaylistAdapter extends BaseAdapter {
+        private final ArrayList<PlaylistEntry> items;
+        private final boolean[] checked;
+        private final Runnable changed;
+
+        PlaylistAdapter(ArrayList<PlaylistEntry> items, boolean[] checked, Runnable changed) {
+            this.items = items;
+            this.checked = checked;
+            this.changed = changed;
+        }
+
+        @Override public int getCount() { return items.size(); }
+        @Override public Object getItem(int position) { return items.get(position); }
+        @Override public long getItemId(int position) { return position; }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            PlaylistRowHolder h;
+            if (convertView == null) {
+                LinearLayout row = new LinearLayout(V2MainActivity.this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(8), dp(8), dp(8), dp(8));
+                row.setBackground(roundBg(Color.WHITE, BORDER, 14));
+                if (Build.VERSION.SDK_INT >= 21) row.setElevation(dp(1));
+
+                ImageView thumb = new ImageView(V2MainActivity.this);
+                thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                thumb.setBackground(roundBg(SURFACE_2, BORDER, 10));
+                row.addView(thumb, new LinearLayout.LayoutParams(dp(96), dp(60)));
+
+                LinearLayout text = new LinearLayout(V2MainActivity.this);
+                text.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams tx = new LinearLayout.LayoutParams(0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                tx.leftMargin = dp(11);
+                row.addView(text, tx);
+
+                TextView title = new TextView(V2MainActivity.this);
+                title.setTextColor(TEXT);
+                title.setTextSize(14);
+                title.setTypeface(Typeface.DEFAULT_BOLD);
+                title.setMaxLines(2);
+                text.addView(title);
+
+                TextView meta = smallText("");
+                meta.setPadding(0, dp(4), 0, 0);
+                text.addView(meta);
+
+                CheckBox check = new CheckBox(V2MainActivity.this);
+                check.setClickable(false);
+                check.setFocusable(false);
+                row.addView(check, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+                h = new PlaylistRowHolder(thumb, title, meta, check);
+                row.setTag(h);
+                convertView = row;
+            } else {
+                h = (PlaylistRowHolder) convertView.getTag();
+            }
+
+            PlaylistEntry e = items.get(position);
+            h.title.setText(e.title == null || e.title.trim().isEmpty() ? "YouTube video" : e.title);
+            h.meta.setText((position + 1) + " of " + items.size() +
+                    (e.duration > 0 ? " • " + formatDuration(e.duration) : " • YouTube"));
+            h.check.setChecked(checked[position]);
+
+            String thumbnail = e.thumbnail;
+            if (thumbnail == null || !thumbnail.startsWith("http")) {
+                thumbnail = "https://i.ytimg.com/vi/" + e.id + "/mqdefault.jpg";
+            }
+            h.thumb.setImageDrawable(null);
+            loadThumbnailAsync(thumbnail, h.thumb);
+
+            final int itemPosition = position;
+            convertView.setOnClickListener(v -> {
+                checked[itemPosition] = !checked[itemPosition];
+                notifyDataSetChanged();
+                if (changed != null) changed.run();
+            });
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = dp(7);
+            convertView.setLayoutParams(lp);
+            return convertView;
+        }
+    }
+
+    private static class PlaylistRowHolder {
+        final ImageView thumb;
+        final TextView title;
+        final TextView meta;
+        final CheckBox check;
+        PlaylistRowHolder(ImageView thumb, TextView title, TextView meta, CheckBox check) {
+            this.thumb = thumb;
+            this.title = title;
+            this.meta = meta;
+            this.check = check;
+        }
     }
 
     private static class PlaylistEntry {
@@ -1927,10 +2110,12 @@ public class V2MainActivity extends Activity {
         String title;
         String url;
         String thumbnail;
+        int duration;
     }
 
     private static class PlaylistResult {
         String title;
+        String thumbnail;
         final ArrayList<PlaylistEntry> entries = new ArrayList<>();
     }
 

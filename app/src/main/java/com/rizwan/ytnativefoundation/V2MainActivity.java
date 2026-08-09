@@ -18,7 +18,6 @@ import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
-import androidx.media3.muxer.MediaMuxerCompat;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -44,6 +43,10 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.arthenica.ffmpegkit.FFmpegKit;
+import com.arthenica.ffmpegkit.FFmpegSession;
+import com.arthenica.ffmpegkit.ReturnCode;
 
 import com.yausername.ffmpeg.FFmpeg;
 import com.yausername.youtubedl_android.YoutubeDL;
@@ -123,6 +126,7 @@ public class V2MainActivity extends Activity {
     private volatile boolean cancelCurrent = false;
     private volatile String processId = null;
     private volatile DownloadTask currentTask = null;
+    private volatile String lastFinalizeReport = null;
     private String lastClipboardUrl = null;
     private String pendingClipboardUrl = null;
 
@@ -1254,11 +1258,14 @@ public class V2MainActivity extends Activity {
             }
         }
         queueRunning = false;
+        final String finishReport = lastFinalizeReport;
         runOnUiThread(() -> {
             activeTitle.setText("Queue finished");
-            activeMeta.setText("");
+            activeMeta.setText(finishReport == null ? "" : finishReport);
             progress.setProgress(100);
-            setStatus("All queued items have been processed.");
+            setStatus(finishReport == null
+                    ? "All queued items have been processed."
+                    : "All queued items have been processed.\nLast finalize: " + finishReport);
             refreshQueueUi();
             refreshCompletedUi();
         });
@@ -1415,53 +1422,82 @@ public class V2MainActivity extends Activity {
         File audioFile = findCompleteFile(workDir, "audio.");
         if (audioFile == null || !hasAudioTrack(audioFile.getAbsolutePath())) throw new Exception("AAC audio stream was not created correctly.");
 
-        task.stage = "Fast joining video + audio";
+        task.stage = "Native joining video + audio";
         task.itemProgress = 95;
         runOnUiThread(() -> {
             progress.setProgress(overallProgress(task, 95));
-            activeTitle.setText(itemPrefix(task) + "Fast joining video + audio");
+            activeTitle.setText(itemPrefix(task) + "Native joining video + audio");
             setStatus(task.playlistBatch ? playlistStatusLine(task, 95) :
-                    "Joining with the fast MP4 muxer…");
+                    "Joining without re-encoding using the native MP4 engine…");
             refreshQueueUi();
         });
 
+        File mergedTemp = new File(workDir, "merged-native.mp4");
+        if (mergedTemp.exists() && !mergedTemp.delete()) throw new Exception("Could not replace temporary merged MP4.");
         if (finalFile.exists() && !finalFile.delete()) throw new Exception("Could not replace old final file.");
+
+        long finalizeStarted = System.currentTimeMillis();
         long muxStarted = System.currentTimeMillis();
-        boolean media3Used = false;
-        Exception media3Error = null;
+        String muxName = "Native FFmpeg";
+        Exception nativeError = null;
         try {
-            muxWithMedia3Compat(videoFile, audioFile, finalFile);
-            if (!finalFile.isFile() || finalFile.length() <= 0 ||
-                    !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
-                throw new Exception("Media3 fast mux verification failed.");
+            muxWithNativeFfmpeg(videoFile, audioFile, mergedTemp);
+            if (!mergedTemp.isFile() || mergedTemp.length() <= 0 ||
+                    !hasVideoTrack(mergedTemp.getAbsolutePath()) || !hasAudioTrack(mergedTemp.getAbsolutePath())) {
+                throw new Exception("Native FFmpeg mux verification failed.");
             }
-            media3Used = true;
-        } catch (Exception fastMuxError) {
-            media3Error = fastMuxError;
-            if (finalFile.exists()) finalFile.delete();
-            muxWithAndroid(videoFile, audioFile, finalFile);
-            if (!finalFile.isFile() || finalFile.length() <= 0 ||
-                    !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
-                if (finalFile.exists()) finalFile.delete();
-                throw new Exception("Final saved MP4 verification failed after fallback.", fastMuxError);
+        } catch (Exception nativeMuxError) {
+            nativeError = nativeMuxError;
+            if (mergedTemp.exists()) mergedTemp.delete();
+            muxName = "Android fallback";
+            try {
+                muxWithAndroid(videoFile, audioFile, mergedTemp);
+                if (!mergedTemp.isFile() || mergedTemp.length() <= 0 ||
+                        !hasVideoTrack(mergedTemp.getAbsolutePath()) || !hasAudioTrack(mergedTemp.getAbsolutePath())) {
+                    throw new Exception("Android fallback verification failed.");
+                }
+            } catch (Exception fallbackError) {
+                if (mergedTemp.exists()) mergedTemp.delete();
+                throw new Exception("Native and Android mux both failed. Native: " + shortMessage(nativeError), fallbackError);
             }
         }
         long muxMs = Math.max(0L, System.currentTimeMillis() - muxStarted);
-        String muxName = media3Used ? "Media3 fast mux" : "Android fallback mux";
+
+        task.stage = "Saving final MP4";
+        task.itemProgress = 99;
+        runOnUiThread(() -> {
+            progress.setProgress(overallProgress(task, 99));
+            activeTitle.setText(itemPrefix(task) + "Saving final MP4");
+            setStatus("Join finished in " + formatElapsedMs(muxMs) + " • publishing file…");
+            refreshQueueUi();
+        });
+
+        long publishStarted = System.currentTimeMillis();
+        moveOrCopy(mergedTemp, finalFile);
+        long publishMs = Math.max(0L, System.currentTimeMillis() - publishStarted);
+        if (!finalFile.isFile() || finalFile.length() <= 0 ||
+                !hasVideoTrack(finalFile.getAbsolutePath()) || !hasAudioTrack(finalFile.getAbsolutePath())) {
+            if (finalFile.exists()) finalFile.delete();
+            throw new Exception("Final saved MP4 verification failed.");
+        }
+        long finalizeMs = Math.max(0L, System.currentTimeMillis() - finalizeStarted);
+
         String muxTime = formatElapsedMs(muxMs);
+        String publishTime = formatElapsedMs(publishMs);
+        String totalTime = formatElapsedMs(finalizeMs);
+        lastFinalizeReport = muxName + " • Join " + muxTime + " • Save " + publishTime + " • Total " + totalTime;
 
         deleteWorkFiles(workDir);
-        task.stage = "Joined in " + muxTime;
+        task.stage = "Finalize " + totalTime;
         task.itemProgress = 100;
         final long finalBytes = finalFile.length();
-        final String finalMuxName = muxName;
-        final String finalMuxTime = muxTime;
+        final String report = lastFinalizeReport;
         runOnUiThread(() -> {
             progress.setProgress(overallProgress(task, 100));
             activeTitle.setText(itemPrefix(task) + "Completed");
             activeMeta.setText(task.title + " • " + formatBytes(finalBytes));
-            String joinText = finalMuxName + " • joined in " + finalMuxTime;
-            setStatus(task.playlistBatch ? playlistStatusLine(task, 100) + "\n" + joinText : joinText);
+            setStatus(task.playlistBatch ? playlistStatusLine(task, 100) + "\n" + report : report);
+            Toast.makeText(this, report, Toast.LENGTH_LONG).show();
             refreshQueueUi();
         });
     }
@@ -1531,65 +1567,23 @@ public class V2MainActivity extends Activity {
         };
     }
 
-    private void muxWithMedia3Compat(File videoFile, File audioFile, File outputFile) throws Exception {
-        MediaExtractor videoExtractor = new MediaExtractor();
-        MediaExtractor audioExtractor = new MediaExtractor();
-        MediaMuxerCompat muxer = null;
-        boolean started = false;
-        try {
-            videoExtractor.setDataSource(videoFile.getAbsolutePath());
-            audioExtractor.setDataSource(audioFile.getAbsolutePath());
-            int vs = findTrack(videoExtractor, "video/");
-            int as = findTrack(audioExtractor, "audio/");
-            if (vs < 0 || as < 0) throw new Exception("Media3 mux input track missing.");
-            MediaFormat vf = videoExtractor.getTrackFormat(vs);
-            MediaFormat af = audioExtractor.getTrackFormat(as);
-            String vm = vf.getString(MediaFormat.KEY_MIME);
-            String am = af.getString(MediaFormat.KEY_MIME);
-            if (vm == null || !"video/avc".equalsIgnoreCase(vm)) throw new Exception("Fast mux requires H.264 video, got " + vm);
-            if (am == null || !am.toLowerCase(Locale.US).startsWith("audio/mp4a")) throw new Exception("Fast mux requires AAC audio, got " + am);
-            if (outputFile.exists() && !outputFile.delete()) throw new Exception("Could not replace output MP4.");
-            muxer = new MediaMuxerCompat(outputFile.getAbsolutePath(), MediaMuxerCompat.OUTPUT_FORMAT_MP4);
-            if (vf.containsKey(MediaFormat.KEY_ROTATION)) {
-                int r = vf.getInteger(MediaFormat.KEY_ROTATION);
-                if (r == 90 || r == 180 || r == 270) muxer.setOrientationHint(r);
-            }
-            int vmux = muxer.addTrack(vf);
-            int amux = muxer.addTrack(af);
-            videoExtractor.selectTrack(vs);
-            audioExtractor.selectTrack(as);
-            muxer.start();
-            started = true;
-            int bufferSize = Math.max(8 * 1024 * 1024, Math.max(maxInputSize(vf), maxInputSize(af)) + 1024);
-            ByteBuffer buffer = ByteBuffer.allocateDirect(bufferSize);
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            long vt = videoExtractor.getSampleTime();
-            long at = audioExtractor.getSampleTime();
-            while (vt >= 0 || at >= 0) {
-                boolean useVideo = at < 0 || (vt >= 0 && vt <= at);
-                MediaExtractor ex = useVideo ? videoExtractor : audioExtractor;
-                int track = useVideo ? vmux : amux;
-                buffer.clear();
-                int size = ex.readSampleData(buffer, 0);
-                if (size < 0) {
-                    if (useVideo) vt = -1; else at = -1;
-                    continue;
-                }
-                info.set(0, size, ex.getSampleTime(), ex.getSampleFlags());
-                muxer.writeSampleData(track, buffer, info);
-                ex.advance();
-                if (useVideo) vt = videoExtractor.getSampleTime(); else at = audioExtractor.getSampleTime();
-            }
-            muxer.stop();
-            started = false;
-        } finally {
-            try { videoExtractor.release(); } catch (Exception ignored) { }
-            try { audioExtractor.release(); } catch (Exception ignored) { }
-            if (muxer != null) {
-                if (started) try { muxer.stop(); } catch (Exception ignored) { }
-                try { muxer.release(); } catch (Exception ignored) { }
-            }
+
+    private void muxWithNativeFfmpeg(File videoFile, File audioFile, File outputFile) throws Exception {
+        if (outputFile.exists() && !outputFile.delete()) throw new Exception("Could not replace native mux output.");
+        String command = "-hide_banner -loglevel error -y " +
+                "-i " + ffmpegQuote(videoFile.getAbsolutePath()) + " " +
+                "-i " + ffmpegQuote(audioFile.getAbsolutePath()) + " " +
+                "-map 0:v:0 -map 1:a:0 -c copy -movflags +faststart " +
+                ffmpegQuote(outputFile.getAbsolutePath());
+        FFmpegSession session = FFmpegKit.execute(command);
+        if (session == null || !ReturnCode.isSuccess(session.getReturnCode())) {
+            String code = session == null || session.getReturnCode() == null ? "unknown" : session.getReturnCode().toString();
+            throw new Exception("Native FFmpeg remux failed (code " + code + ").");
         }
+    }
+
+    private String ffmpegQuote(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private void muxWithAndroid(File videoFile, File audioFile, File outputFile) throws Exception {

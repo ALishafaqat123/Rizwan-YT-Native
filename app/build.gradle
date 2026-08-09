@@ -10,8 +10,8 @@ android {
         applicationId 'com.rizwan.ytnative.v2preview'
         minSdk 24
         targetSdk 27
-        versionCode 202
-        versionName '2.0.2-fast-finalize-preview'
+        versionCode 203
+        versionName '2.0.3-native-finalize-preview'
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -48,5 +48,5 @@ android {
 dependencies {
     implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
     implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
-    implementation 'androidx.media3:media3-muxer:1.9.1'
+    implementation 'dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.7'
 }

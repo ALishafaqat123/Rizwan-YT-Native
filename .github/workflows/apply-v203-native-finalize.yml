@@ -1,0 +1,35 @@
+name: Apply V2.0.3 Native Finalize Patch
+
+on:
+  push:
+    branches: [ "v2-ui-rebuild" ]
+    paths:
+      - '.github/scripts/v203_native_finalize.py'
+      - '.github/workflows/apply-v203-native-finalize.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-ui-rebuild
+      - name: Apply V2.0.3 source patch
+        run: python3 .github/scripts/v203_native_finalize.py
+      - name: Commit patched source and build config
+        shell: bash
+        run: |
+          set -e
+          git config user.name "Rizwan Media Saver CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/rizwan/ytnativefoundation/V2MainActivity.java app/build.gradle .github/workflows/build-apk.yml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Use native FFmpeg stream-copy finalize with exact timing"
+            git push origin HEAD:v2-ui-rebuild
+          fi

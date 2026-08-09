@@ -7,7 +7,7 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.rizwan.ytnative'
+        applicationId 'com.rizwan.ytnative.v2preview'
         minSdk 24
         targetSdk 27
         versionCode 200

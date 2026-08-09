@@ -10,8 +10,8 @@ android {
         applicationId 'com.rizwan.ytnative'
         minSdk 24
         targetSdk 27
-        versionCode 180
-        versionName '1.8.0-smart-clipboard-playlist-queue'
+        versionCode 181
+        versionName '1.8.1-fast-analyze-playlist-fix'
 
         ndk {
             abiFilters 'arm64-v8a'

@@ -510,8 +510,7 @@ public class V2MainActivity extends Activity {
                 runOnUiThread(() -> {
                     goButton.setEnabled(true);
                     activeTitle.setText("Ready");
-                    setStatus(n + "
-Fast V2 engine • Android MediaMuxer ready.");
+                    setStatus(n + "\nFast V2 engine • Android MediaMuxer ready.");
                     if (pendingClipboardUrl != null) {
                         String p = pendingClipboardUrl;
                         pendingClipboardUrl = null;
@@ -2084,10 +2083,6 @@ Fast V2 engine • Android MediaMuxer ready.");
                 if (changed != null) changed.run();
             });
 
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.bottomMargin = dp(7);
-            convertView.setLayoutParams(lp);
             return convertView;
         }
     }

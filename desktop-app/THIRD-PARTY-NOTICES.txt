@@ -1,0 +1,19 @@
+Rizwan Media Saver PC uses external command-line tools distributed alongside the application.
+
+1) yt-dlp
+Project: https://github.com/yt-dlp/yt-dlp
+License information is provided by the yt-dlp project and its release package.
+The Windows executable is downloaded from the official yt-dlp GitHub release during the build.
+
+2) FFmpeg
+Project: https://ffmpeg.org/
+Windows binary build source: https://github.com/BtbN/FFmpeg-Builds
+This application uses FFmpeg as a separate executable for container remux/merge operations. The build workflow uses the LGPL variant.
+License: GNU Lesser General Public License (see the FFmpeg project for complete terms and source).
+
+3) Deno
+Project: https://github.com/denoland/deno
+License: MIT
+The Windows executable is downloaded from the official Deno GitHub release during the build.
+
+These tools are not modified by Rizwan Media Saver PC. Their respective upstream projects retain all rights under their licenses.

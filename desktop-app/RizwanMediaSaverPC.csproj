@@ -7,12 +7,16 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Rizwan Media Saver PC</AssemblyName>
     <RootNamespace>RizwanMediaSaverPC</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Company>Muhammad Rizwan</Company>
     <Product>Rizwan Media Saver PC</Product>
-    <Description>Ad-free desktop media saver with yt-dlp and FFmpeg remux.</Description>
+    <Description>Browser-first ad-free desktop media saver with yt-dlp, FFmpeg and YouTube audio language selection.</Description>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
 </Project>

@@ -1,0 +1,54 @@
+name: Diagnose PC YouTube Audio
+
+on:
+  push:
+    branches: [ "v2-ui-rebuild" ]
+    paths:
+      - ".github/workflows/diagnose-pc-audio.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download latest yt-dlp and Deno
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force diag | Out-Null
+          curl.exe -L --fail --retry 3 "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -o "diag/yt-dlp.exe"
+          curl.exe -L --fail --retry 3 "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -o "$env:RUNNER_TEMP/deno.zip"
+          Expand-Archive "$env:RUNNER_TEMP/deno.zip" "$env:RUNNER_TEMP/deno" -Force
+          Copy-Item "$env:RUNNER_TEMP/deno/deno.exe" "diag/deno.exe"
+          & "diag/yt-dlp.exe" --version | Tee-Object "diag/version.txt"
+      - name: Probe exact reported video
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $url = "https://www.youtube.com/watch?v=RCMHAF7dQgg"
+          $base = @('--skip-download','--no-playlist','--js-runtimes',"deno:$PWD/diag/deno.exe",'--remote-components','ejs:github','--force-ipv4')
+          "=== DEFAULT JSON ===" | Out-File diag/report.txt
+          & "diag/yt-dlp.exe" @base --dump-single-json $url 1> diag/default.json 2> diag/default.err
+          "exit=$LASTEXITCODE" | Add-Content diag/report.txt
+          Get-Content diag/default.err | Add-Content diag/report.txt
+          "=== DEFAULT FORMATS ===" | Add-Content diag/report.txt
+          & "diag/yt-dlp.exe" @base -F $url 2>&1 | Add-Content diag/report.txt
+          "=== DEFAULT + WEB_EMBEDDED ===" | Add-Content diag/report.txt
+          & "diag/yt-dlp.exe" @base --extractor-args "youtube:player_client=default,web_embedded" -F $url 2>&1 | Add-Content diag/report.txt
+          "=== WEB_EMBEDDED + DEFAULT ===" | Add-Content diag/report.txt
+          & "diag/yt-dlp.exe" @base --extractor-args "youtube:player_client=web_embedded,default" -F $url 2>&1 | Add-Content diag/report.txt
+          "=== RICH JSON ===" | Add-Content diag/report.txt
+          & "diag/yt-dlp.exe" @base --extractor-args "youtube:player_client=default,web_embedded" --dump-single-json $url 1> diag/rich.json 2> diag/rich.err
+          "exit=$LASTEXITCODE" | Add-Content diag/report.txt
+          Get-Content diag/rich.err | Add-Content diag/report.txt
+          Get-Item diag/default.json,diag/rich.json | Format-Table Name,Length | Out-String | Add-Content diag/report.txt
+          Get-Content diag/report.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pc-audio-diagnostic
+          path: diag/
+          retention-days: 2

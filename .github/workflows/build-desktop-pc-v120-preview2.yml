@@ -1,0 +1,118 @@
+name: Build Rizwan Media Saver PC v1.2 Preview 2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "agent/pc-v1.2-preview2-playlist-ui-settings" ]
+    paths:
+      - "desktop-app/**"
+      - ".github/workflows/build-desktop-pc-v120-preview2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows installer v1.2 Preview 2
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout Preview 2 source
+        uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview2-playlist-ui-settings
+
+      - name: Apply v1.1.1 instant YouTube navigation analysis fix
+        shell: pwsh
+        run: python desktop-app/tools/apply_v111_navigation_fix.py
+
+      - name: Apply v1.1.2 Rich Audio Scan
+        shell: pwsh
+        run: python desktop-app/tools/apply_v112_rich_audio.py
+
+      - name: Apply v1.1.3 WebView YouTube session bridge
+        shell: pwsh
+        run: python desktop-app/tools/apply_v113_webview_session_bridge.py
+
+      - name: Repair v1.1.3 generated cookie escapes
+        shell: pwsh
+        run: python desktop-app/tools/apply_v113_escape_fix.py
+
+      - name: Apply v1.2 Preview 1 Smart Quality foundation
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_smart_quality.py
+
+      - name: Apply v1.2 Preview 2 playlist UI and settings
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Download official yt-dlp, Deno and FFmpeg engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "desktop-app/tools" | Out-Null
+          curl.exe -L --fail --retry 3 "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -o "desktop-app/tools/yt-dlp.exe"
+          curl.exe -L --fail --retry 3 "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -o "$env:RUNNER_TEMP/deno.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/deno.zip" -DestinationPath "$env:RUNNER_TEMP/deno" -Force
+          Copy-Item "$env:RUNNER_TEMP/deno/deno.exe" "desktop-app/tools/deno.exe" -Force
+          curl.exe -L --fail --retry 3 "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -o "$env:RUNNER_TEMP/ffmpeg.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP/ffmpeg" -Force
+          $ffmpeg = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg) { throw "ffmpeg.exe not found in downloaded archive" }
+          Copy-Item $ffmpeg.FullName "desktop-app/tools/ffmpeg.exe" -Force
+          if ($ffprobe) { Copy-Item $ffprobe.FullName "desktop-app/tools/ffprobe.exe" -Force }
+
+      - name: Publish self-contained Win64 GUI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
+          dotnet publish "desktop-app/RizwanMediaSaverPC.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "desktop-app/publish"
+          New-Item -ItemType Directory -Force -Path "desktop-app/publish/tools" | Out-Null
+          Copy-Item "desktop-app/tools/*" "desktop-app/publish/tools/" -Force
+          Copy-Item "desktop-app/THIRD-PARTY-NOTICES.txt" "desktop-app/publish/THIRD-PARTY-NOTICES.txt" -Force
+          if (-not (Test-Path "desktop-app/publish/Rizwan Media Saver PC.exe")) { throw "Published GUI exe missing" }
+
+      - name: Smoke-check bundled engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "desktop-app/publish/tools/yt-dlp.exe" --version
+          & "desktop-app/publish/tools/ffmpeg.exe" -version | Select-Object -First 1
+          & "desktop-app/publish/tools/deno.exe" --version
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Preview 2 Setup EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "desktop-artifacts" | Out-Null
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found" }
+          & $iscc "desktop-app/installer.iss"
+          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview2-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "Preview 2 Setup EXE was not created" }
+          Get-FileHash $setup -Algorithm SHA256 | Format-List | Out-File "desktop-artifacts/SHA256.txt"
+
+      - name: Create Preview 2 portable ZIP backup
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "desktop-app/publish/*" -DestinationPath "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview2-Portable.zip" -CompressionLevel Optimal -Force
+
+      - name: Upload Preview 2 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rizwan-Media-Saver-PC-v1.2.0-Preview2
+          path: desktop-artifacts/
+          if-no-files-found: error
+          retention-days: 14

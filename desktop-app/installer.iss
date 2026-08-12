@@ -1,5 +1,5 @@
 #define MyAppName "Rizwan Media Saver PC"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "Muhammad Rizwan"
 #define MyAppExeName "Rizwan Media Saver PC.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={localappdata}\Programs\Rizwan Media Saver PC
 DefaultGroupName=Rizwan Media Saver PC
 DisableProgramGroupPage=yes
 OutputDir=..\desktop-artifacts
-OutputBaseFilename=Rizwan-Media-Saver-PC-v1.1.1-Setup
+OutputBaseFilename=Rizwan-Media-Saver-PC-v1.1.2-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

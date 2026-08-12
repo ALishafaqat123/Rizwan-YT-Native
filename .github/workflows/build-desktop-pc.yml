@@ -35,6 +35,10 @@ jobs:
         shell: pwsh
         run: python desktop-app/tools/apply_v113_webview_session_bridge.py
 
+      - name: Repair v1.1.3 generated cookie escapes
+        shell: pwsh
+        run: python desktop-app/tools/apply_v113_escape_fix.py
+
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
         with:

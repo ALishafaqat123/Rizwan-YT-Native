@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Windows installer
+    name: Build Windows installer v1.1.0
     runs-on: windows-latest
     timeout-minutes: 35
 
@@ -52,10 +52,11 @@ jobs:
           & "desktop-app/tools/deno.exe" --version
           & "desktop-app/tools/ffmpeg.exe" -version | Select-Object -First 1
 
-      - name: Publish self-contained Win64 GUI
+      - name: Publish self-contained Win64 GUI with WebView2 SDK
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
           dotnet publish "desktop-app/RizwanMediaSaverPC.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "desktop-app/publish"
           New-Item -ItemType Directory -Force -Path "desktop-app/publish/tools" | Out-Null
           Copy-Item "desktop-app/tools/*" "desktop-app/publish/tools/" -Force
@@ -82,19 +83,19 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found" }
           & $iscc "desktop-app/installer.iss"
-          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.0.0-Setup.exe"
+          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.1.0-Setup.exe"
           if (-not (Test-Path $setup)) { throw "Setup EXE was not created" }
           Get-FileHash $setup -Algorithm SHA256 | Format-List | Out-File "desktop-artifacts/SHA256.txt"
 
       - name: Create portable ZIP for backup
         shell: pwsh
         run: |
-          Compress-Archive -Path "desktop-app/publish/*" -DestinationPath "desktop-artifacts/Rizwan-Media-Saver-PC-v1.0.0-Portable.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "desktop-app/publish/*" -DestinationPath "desktop-artifacts/Rizwan-Media-Saver-PC-v1.1.0-Portable.zip" -CompressionLevel Optimal -Force
 
       - name: Upload verified desktop artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-PC-v1.0.0
+          name: Rizwan-Media-Saver-PC-v1.1.0
           path: desktop-artifacts/
           if-no-files-found: error
           retention-days: 14

@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Windows installer v1.1.0
+    name: Build Windows installer v1.1.1
     runs-on: windows-latest
     timeout-minutes: 35
 
@@ -22,6 +22,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: v2-ui-rebuild
+
+      - name: Apply v1.1.1 instant YouTube navigation analysis fix
+        shell: pwsh
+        run: python desktop-app/tools/apply_v111_navigation_fix.py
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -83,19 +87,19 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found" }
           & $iscc "desktop-app/installer.iss"
-          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.1.0-Setup.exe"
+          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.1.1-Setup.exe"
           if (-not (Test-Path $setup)) { throw "Setup EXE was not created" }
           Get-FileHash $setup -Algorithm SHA256 | Format-List | Out-File "desktop-artifacts/SHA256.txt"
 
       - name: Create portable ZIP for backup
         shell: pwsh
         run: |
-          Compress-Archive -Path "desktop-app/publish/*" -DestinationPath "desktop-artifacts/Rizwan-Media-Saver-PC-v1.1.0-Portable.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "desktop-app/publish/*" -DestinationPath "desktop-artifacts/Rizwan-Media-Saver-PC-v1.1.1-Portable.zip" -CompressionLevel Optimal -Force
 
       - name: Upload verified desktop artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Rizwan-Media-Saver-PC-v1.1.0
+          name: Rizwan-Media-Saver-PC-v1.1.1
           path: desktop-artifacts/
           if-no-files-found: error
           retention-days: 14

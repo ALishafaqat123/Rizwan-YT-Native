@@ -43,6 +43,10 @@ jobs:
         shell: pwsh
         run: python desktop-app/tools/apply_v120_smart_quality.py
 
+      - name: Fix Preview 2 navigation patch anchor
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview2_navigation_anchor.py
+
       - name: Apply v1.2 Preview 2 playlist UI and settings
         shell: pwsh
         run: python desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py

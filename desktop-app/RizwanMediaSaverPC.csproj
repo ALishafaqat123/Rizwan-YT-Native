@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Rizwan Media Saver PC</AssemblyName>
+    <RootNamespace>RizwanMediaSaverPC</RootNamespace>
+    <Version>1.0.0</Version>
+    <Company>Muhammad Rizwan</Company>
+    <Product>Rizwan Media Saver PC</Product>
+    <Description>Ad-free desktop media saver with yt-dlp and FFmpeg remux.</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+</Project>

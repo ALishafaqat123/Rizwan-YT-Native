@@ -7,10 +7,10 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Rizwan Media Saver PC</AssemblyName>
     <RootNamespace>RizwanMediaSaverPC</RootNamespace>
-    <Version>1.1.2</Version>
+    <Version>1.1.3</Version>
     <Company>Muhammad Rizwan</Company>
     <Product>Rizwan Media Saver PC</Product>
-    <Description>Browser-first ad-free desktop media saver with instant YouTube page analysis, Rich Audio Scan, yt-dlp and FFmpeg.</Description>
+    <Description>Browser-first desktop media saver with WebView YouTube session bridge, Rich Audio Scan, yt-dlp and FFmpeg.</Description>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>

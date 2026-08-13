@@ -1,0 +1,51 @@
+name: Refresh Preview 3 Artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "agent/pc-v1.2-preview3-fast-analysis" ]
+    paths:
+      - ".github/workflows/refresh-preview3-artifact.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old duplicate artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for id in 9151564012 9151299217 9151275883 9154175854 9149053233 9149028079; do
+            curl -sS -L -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/ALishafaqat123/Rizwan-YT-Native/actions/artifacts/$id" || true
+          done
+
+      - name: Download Preview 3 release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p preview3
+          gh release download pc-v1.2-preview3-fast-analysis \
+            --repo ALishafaqat123/Rizwan-YT-Native \
+            --pattern "Rizwan-Media-Saver-PC-v1.2.0-Preview3-Setup.exe" \
+            --dir preview3
+          ls -lh preview3
+
+      - name: Upload Preview 3 setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rizwan-Media-Saver-PC-v1.2.0-Preview3-Setup-Only
+          path: preview3/Rizwan-Media-Saver-PC-v1.2.0-Preview3-Setup.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

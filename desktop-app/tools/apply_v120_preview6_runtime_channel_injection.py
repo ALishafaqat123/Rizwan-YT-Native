@@ -210,15 +210,15 @@ if old not in s:
 s = s.replace(old, new, 1)
 
 # Force runtime injection on every completed navigation before normal media handling.
-old = '        browser.NavigationCompleted += async (_, _) => await HandleBrowserNavigationAsync();\n'
-new = '''        browser.NavigationCompleted += async (_, _) =>\n        {\n            await EnsureChannelSelectorInjectedAsync();\n            await HandleBrowserNavigationAsync();\n        };\n'''
+old = '''        browser.NavigationCompleted += async (_, _) =>\n        {\n            if (browser.Source != null) await HandleBrowserNavigationAsync(browser.Source.ToString());\n        };\n'''
+new = '''        browser.NavigationCompleted += async (_, _) =>\n        {\n            await EnsureChannelSelectorInjectedAsync();\n            if (browser.Source != null) await HandleBrowserNavigationAsync(browser.Source.ToString());\n        };\n'''
 if old not in s:
     raise SystemExit('Preview6 NavigationCompleted anchor not found')
 s = s.replace(old, new, 1)
 
-# Also run after SPA SourceChanged, where NavigationCompleted may not fire.
-old = '''        browser.SourceChanged += (_, _) =>\n        {\n            if (browser.Source != null) addressBox.Text = browser.Source.ToString();\n        };\n'''
-new = '''        browser.SourceChanged += (_, _) =>\n        {\n            if (browser.Source != null) addressBox.Text = browser.Source.ToString();\n            _ = EnsureChannelSelectorInjectedAsync();\n        };\n'''
+# Also run after YouTube SPA SourceChanged, which is often the only navigation event.
+old = '''        browser.SourceChanged += async (_, _) =>\n        {\n            if (browser.Source == null) return;\n            var sourceUrl = browser.Source.ToString();\n            addressBox.Text = sourceUrl;\n            // YouTube is a single-page app: clicking another video often changes the URL\n            // without a full NavigationCompleted event. Analyze immediately on SourceChanged.\n            await HandleBrowserNavigationAsync(sourceUrl);\n        };\n'''
+new = '''        browser.SourceChanged += async (_, _) =>\n        {\n            if (browser.Source == null) return;\n            var sourceUrl = browser.Source.ToString();\n            addressBox.Text = sourceUrl;\n            await EnsureChannelSelectorInjectedAsync();\n            // YouTube is a single-page app: clicking another video often changes the URL\n            // without a full NavigationCompleted event. Analyze immediately on SourceChanged.\n            await HandleBrowserNavigationAsync(sourceUrl);\n        };\n'''
 if old not in s:
     raise SystemExit('Preview6 SourceChanged anchor not found')
 s = s.replace(old, new, 1)

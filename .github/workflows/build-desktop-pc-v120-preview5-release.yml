@@ -1,0 +1,125 @@
+name: Build Rizwan Media Saver PC v1.2 Preview 5
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "agent/pc-v1.2-preview5-channel-selector-fix" ]
+    paths:
+      - ".github/workflows/build-desktop-pc-v120-preview5-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Preview 5 Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Preview 5 source
+        uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview5-channel-selector-fix
+
+      - name: Apply v1.1.1 navigation fix
+        shell: pwsh
+        run: python desktop-app/tools/apply_v111_navigation_fix.py
+
+      - name: Apply v1.1.2 Rich Audio
+        shell: pwsh
+        run: python desktop-app/tools/apply_v112_rich_audio.py
+
+      - name: Apply v1.1.3 WebView session bridge
+        shell: pwsh
+        run: python desktop-app/tools/apply_v113_webview_session_bridge.py
+
+      - name: Repair v1.1.3 escapes
+        shell: pwsh
+        run: python desktop-app/tools/apply_v113_escape_fix.py
+
+      - name: Apply Preview 1 Smart Quality
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_smart_quality.py
+
+      - name: Correct Preview 2 navigation anchor
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview2_navigation_anchor_v2.py
+
+      - name: Apply Preview 2 playlist UI and settings
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py
+
+      - name: Apply Preview 3 fast analysis
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_preview3_fast_analysis.py
+
+      - name: Correct Preview 4 navigation anchor
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview4_navigation_anchor.py
+
+      - name: Apply Preview 4 channel queue UI
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_preview4_channel_queue_ui.py
+
+      - name: Apply Preview 5 channel selector fix
+        shell: pwsh
+        run: python desktop-app/tools/apply_v120_preview5_channel_selector_fix.py
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Download engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "desktop-app/tools" | Out-Null
+          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -o "desktop-app/tools/yt-dlp.exe"
+          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -o "$env:RUNNER_TEMP/deno.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/deno.zip" -DestinationPath "$env:RUNNER_TEMP/deno" -Force
+          Copy-Item "$env:RUNNER_TEMP/deno/deno.exe" "desktop-app/tools/deno.exe" -Force
+          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -o "$env:RUNNER_TEMP/ffmpeg.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP/ffmpeg" -Force
+          $ffmpeg = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg) { throw "ffmpeg.exe not found" }
+          Copy-Item $ffmpeg.FullName "desktop-app/tools/ffmpeg.exe" -Force
+          if ($ffprobe) { Copy-Item $ffprobe.FullName "desktop-app/tools/ffprobe.exe" -Force }
+
+      - name: Publish Win64 GUI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
+          dotnet publish "desktop-app/RizwanMediaSaverPC.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "desktop-app/publish"
+          New-Item -ItemType Directory -Force -Path "desktop-app/publish/tools" | Out-Null
+          Copy-Item "desktop-app/tools/*" "desktop-app/publish/tools/" -Force
+          Copy-Item "desktop-app/THIRD-PARTY-NOTICES.txt" "desktop-app/publish/THIRD-PARTY-NOTICES.txt" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Preview 5 Setup EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "desktop-artifacts" | Out-Null
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc "desktop-app/installer.iss"
+          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview5-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "Preview 5 Setup EXE was not created" }
+          Get-FileHash $setup -Algorithm SHA256 | Format-List | Out-File "desktop-artifacts/SHA256.txt"
+
+      - name: Publish private prerelease asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "pc-v1.2-preview5-channel-selector"
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          gh release create $tag --title "Rizwan Media Saver PC v1.2 Preview 5" --notes "Robust channel video selector matching modern YouTube channel cards; button appears beneath video metadata and only queues selection for Downloads analysis." --prerelease
+          gh release upload $tag "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview5-Setup.exe" "desktop-artifacts/SHA256.txt" --clobber

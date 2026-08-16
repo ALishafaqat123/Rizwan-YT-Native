@@ -73,6 +73,9 @@ jobs:
       - name: Apply Preview 10 event-driven selector
         shell: pwsh
         run: python desktop-app/tools/apply_v120_preview10_event_driven_selector.py
+      - name: Guard Preview 10 document-start root
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview10_document_start_root.py
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4

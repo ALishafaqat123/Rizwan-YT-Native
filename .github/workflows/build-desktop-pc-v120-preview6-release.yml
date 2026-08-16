@@ -1,5 +1,6 @@
 name: Build Rizwan Media Saver PC v1.2 Preview 6
 
+# retry after Preview 6 navigation-anchor correction
 on:
   workflow_dispatch:
   push:

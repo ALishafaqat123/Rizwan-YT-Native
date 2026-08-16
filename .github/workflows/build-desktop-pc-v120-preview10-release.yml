@@ -67,6 +67,9 @@ jobs:
       - name: Apply Preview 9 fast visible selector
         shell: pwsh
         run: python desktop-app/tools/apply_v120_preview9_fast_visible_selector.py
+      - name: Correct Preview 10 patch anchor
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview10_patch_anchor.py
       - name: Apply Preview 10 event-driven selector
         shell: pwsh
         run: python desktop-app/tools/apply_v120_preview10_event_driven_selector.py
@@ -91,7 +94,7 @@ jobs:
           $ffprobe = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffprobe.exe | Select-Object -First 1
           if (-not $ffmpeg) { throw "ffmpeg.exe not found" }
           Copy-Item $ffmpeg.FullName "desktop-app/tools/ffmpeg.exe" -Force
-          if ($ffprobe) { Copy-Item $ffprobe.FullName "desktop-app/tools/ffprobe.exe" "desktop-app/publish/tools/ffprobe.exe" -Force -ErrorAction SilentlyContinue }
+          if ($ffprobe) { Copy-Item $ffprobe.FullName "desktop-app/tools/ffprobe.exe" -Force }
 
       - name: Publish Win64 GUI
         shell: pwsh

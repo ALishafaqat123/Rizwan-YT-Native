@@ -160,3 +160,36 @@ jobs:
           gh release delete $tag --yes --cleanup-tag 2>$null
           gh release create $tag --title "Rizwan Media Saver PC v1.2 Preview 12 Hotfix 2" --notes "UI stability and crash/session recovery hotfix. Stops manager-card rebuild flicker, persists playlist/channel/download state, restores interrupted sessions. Preview 10/11/Hotfix1 behavior preserved." --prerelease
           gh release upload $tag "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview12-Hotfix2-Setup.exe" "desktop-artifacts/SHA256.txt" --clobber
+
+      - name: Record build success marker
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = "ALishafaqat123/Rizwan-YT-Native"
+          $tag = "pc-v1.2-preview12-hotfix2-ui-stability"
+          $assetName = "Rizwan-Media-Saver-PC-v1.2.0-Preview12-Hotfix2-Setup.exe"
+          $release = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+          if (-not $asset) { throw "Hotfix 2 asset not found in release" }
+          $headers = Join-Path $env:RUNNER_TEMP "hf2-headers.txt"
+          curl.exe -sS -D $headers -o NUL -H "Authorization: Bearer $env:GH_TOKEN" -H "Accept: application/octet-stream" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$repo/releases/assets/$($asset.id)"
+          $locationLine = Get-Content $headers | Where-Object { $_ -match '^location:' } | Select-Object -First 1
+          if (-not $locationLine) { throw "Signed asset redirect missing" }
+          $location = ($locationLine -replace '^location:\s*','').Trim()
+          $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($location))
+          $hashLine = (Get-FileHash "desktop-artifacts/$assetName" -Algorithm SHA256).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Force -Path ".build-status" | Out-Null
+          @(
+            "SUCCESS",
+            "asset_id=$($asset.id)",
+            "size=$($asset.size)",
+            "sha256=$hashLine",
+            "signed_url_b64=$b64"
+          ) | Set-Content ".build-status/preview12-hotfix2.txt" -Encoding UTF8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ".build-status/preview12-hotfix2.txt"
+          git commit -m "Record Preview 12 Hotfix 2 build success" || exit 0
+          git push origin HEAD:agent/pc-v1.2-preview12-hotfix2-ui-stability

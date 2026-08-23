@@ -1,0 +1,94 @@
+name: Diagnose Preview 19
+
+on:
+  push:
+    branches: [ "agent/pc-v1.2-preview19-clear-completed-compact-watch" ]
+    paths:
+      - ".github/workflows/diagnose-preview19.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview19-clear-completed-compact-watch
+
+      - name: Apply chain and capture result
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Force -Path ".build-status" | Out-Null
+          $log = New-Object System.Collections.Generic.List[string]
+          $log.Add("Preview 19 diagnostic")
+          python desktop-app/tools/fix_preview15_regex_replacement.py 2>&1 | ForEach-Object { $log.Add($_.ToString()) }
+          if ($LASTEXITCODE -ne 0) { $log.Add("FAIL: fix_preview15_regex_replacement.py exit=$LASTEXITCODE") }
+          $scripts = @(
+            "desktop-app/tools/apply_v111_navigation_fix.py",
+            "desktop-app/tools/apply_v112_rich_audio.py",
+            "desktop-app/tools/apply_v113_webview_session_bridge.py",
+            "desktop-app/tools/apply_v113_escape_fix.py",
+            "desktop-app/tools/apply_v120_smart_quality.py",
+            "desktop-app/tools/fix_preview2_navigation_anchor_v2.py",
+            "desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py",
+            "desktop-app/tools/apply_v120_preview3_fast_analysis.py",
+            "desktop-app/tools/fix_preview4_navigation_anchor.py",
+            "desktop-app/tools/apply_v120_preview4_channel_queue_ui.py",
+            "desktop-app/tools/apply_v120_preview5_channel_selector_fix.py",
+            "desktop-app/tools/apply_v120_preview6_runtime_channel_injection.py",
+            "desktop-app/tools/apply_v120_preview7_scroll_folders.py",
+            "desktop-app/tools/apply_v120_preview8_per_card_selector.py",
+            "desktop-app/tools/apply_v120_preview9_fast_visible_selector.py",
+            "desktop-app/tools/fix_preview10_patch_anchor.py",
+            "desktop-app/tools/apply_v120_preview10_event_driven_selector.py",
+            "desktop-app/tools/fix_preview10_document_start_root.py",
+            "desktop-app/tools/apply_v120_preview11_named_folder_output.py",
+            "desktop-app/tools/apply_v120_preview11_hotfix1_original_audio.py",
+            "desktop-app/tools/apply_v120_preview12_download_manager_ui.py",
+            "desktop-app/tools/apply_v120_preview12_hotfix2_ui_stability_recovery.py",
+            "desktop-app/tools/apply_v120_preview13_pause_resume.py",
+            "desktop-app/tools/apply_v120_preview14_queue_first_ux.py",
+            "desktop-app/tools/apply_v120_preview15_watch_multi.py",
+            "desktop-app/tools/apply_v120_preview16_autoqueue_card_controls.py",
+            "desktop-app/tools/apply_v120_preview17_clean_downloads_ui.py",
+            "desktop-app/tools/apply_v120_preview18_smooth_smart_slots.py",
+            "desktop-app/tools/apply_v120_preview19_clear_completed_compact_watch.py"
+          )
+          $failed = $false
+          foreach ($script in $scripts) {
+            $log.Add("RUN: $script")
+            $out = & python $script 2>&1
+            foreach ($line in $out) { $log.Add($line.ToString()) }
+            if ($LASTEXITCODE -ne 0) {
+              $log.Add("FAIL: $script exit=$LASTEXITCODE")
+              $failed = $true
+              break
+            }
+          }
+          if (-not $failed) {
+            $log.Add("PATCH_CHAIN_SUCCESS")
+            dotnet restore "desktop-app/RizwanMediaSaverPC.csproj" 2>&1 | ForEach-Object { $log.Add($_.ToString()) }
+            $restoreExit = $LASTEXITCODE
+            if ($restoreExit -eq 0) {
+              dotnet build "desktop-app/RizwanMediaSaverPC.csproj" -c Release --no-restore 2>&1 | ForEach-Object { $log.Add($_.ToString()) }
+              $buildExit = $LASTEXITCODE
+              if ($buildExit -eq 0) { $log.Add("COMPILE_SUCCESS") } else { $log.Add("FAIL: dotnet build exit=$buildExit") }
+            } else {
+              $log.Add("FAIL: dotnet restore exit=$restoreExit")
+            }
+          }
+          $log | Set-Content ".build-status/preview19-diagnose.txt" -Encoding UTF8
+
+      - name: Commit diagnostic
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ".build-status/preview19-diagnose.txt"
+          git commit -m "Record Preview 19 diagnostic" || exit 0
+          git pull --rebase origin agent/pc-v1.2-preview19-clear-completed-compact-watch || true
+          git push origin HEAD:agent/pc-v1.2-preview19-clear-completed-compact-watch

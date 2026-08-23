@@ -1,0 +1,50 @@
+name: Check Preview 15 Release
+
+on:
+  push:
+    branches: [ "agent/pc-v1.2-preview15-watch-multi" ]
+    paths:
+      - ".github/workflows/check-preview15-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview15-watch-multi
+          fetch-depth: 0
+      - name: Check release and record asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          repo="ALishafaqat123/Rizwan-YT-Native"
+          tag="pc-v1.2-preview15-watch-multi"
+          assetName="Rizwan-Media-Saver-PC-v1.2.0-Preview15-Setup.exe"
+          mkdir -p .build-status
+          if release=$(gh api "repos/$repo/releases/tags/$tag" 2>/dev/null); then
+            asset=$(printf '%s' "$release" | jq -c --arg n "$assetName" '.assets[]? | select(.name==$n)' | head -n1)
+            if [ -n "$asset" ]; then
+              id=$(printf '%s' "$asset" | jq -r '.id')
+              size=$(printf '%s' "$asset" | jq -r '.size')
+              printf 'SUCCESS\nasset_id=%s\nsize=%s\n' "$id" "$size" > .build-status/preview15-release-check.txt
+            else
+              printf 'NOT_READY\nrelease_exists=yes\nasset_exists=no\n' > .build-status/preview15-release-check.txt
+            fi
+          else
+            printf 'NOT_READY\nrelease_exists=no\n' > .build-status/preview15-release-check.txt
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .build-status/preview15-release-check.txt
+          git commit -m "Record Preview 15 release check" || exit 0
+          for n in 1 2 3; do
+            git pull --rebase origin agent/pc-v1.2-preview15-watch-multi && git push origin HEAD:agent/pc-v1.2-preview15-watch-multi && exit 0
+            sleep 2
+          done
+          exit 1

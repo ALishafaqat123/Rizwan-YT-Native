@@ -10,6 +10,7 @@ s = p.read_text(encoding='utf-8')
 # - Hide the old large bottom download tray on watch pages; the injected small
 #   YouTube Download/Add to Queue button is the primary watch-page action.
 # - Remove the awkward global Open folder toolbar button from the Downloads page.
+# Build trigger: registered Preview 19 validation/release workflows.
 
 # Hide the browser bottom tray permanently after it is constructed.
 old = '''        downloadTray.Controls.Add(tray);\n    }\n'''

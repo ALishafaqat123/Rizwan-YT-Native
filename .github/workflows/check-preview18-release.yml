@@ -1,0 +1,57 @@
+name: Check Preview 18 Release
+
+on:
+  push:
+    branches: [ "agent/pc-v1.2-preview18-smooth-smart-slots" ]
+    paths:
+      - ".github/workflows/check-preview18-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview18-smooth-smart-slots
+
+      - name: Wait for Preview 18 release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="ALishafaqat123/Rizwan-YT-Native"
+          tag="pc-v1.2-preview18-smooth-smart-slots"
+          asset="Rizwan-Media-Saver-PC-v1.2.0-Preview18-Setup.exe"
+          ok=0
+          for i in $(seq 1 60); do
+            if json=$(gh api "repos/$repo/releases/tags/$tag" 2>/dev/null); then
+              id=$(printf '%s' "$json" | jq -r --arg n "$asset" '.assets[]? | select(.name==$n) | .id' | head -n1)
+              size=$(printf '%s' "$json" | jq -r --arg n "$asset" '.assets[]? | select(.name==$n) | .size' | head -n1)
+              if [ -n "${id:-}" ] && [ "$id" != "null" ]; then
+                mkdir -p .build-status
+                printf 'SUCCESS\nasset_id=%s\nsize=%s\n' "$id" "$size" > .build-status/preview18-release-check.txt
+                ok=1
+                break
+              fi
+            fi
+            sleep 10
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "Preview 18 release asset was not ready in time" >&2
+            exit 1
+          fi
+
+      - name: Record check result
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .build-status/preview18-release-check.txt
+          git commit -m "Record Preview 18 release check" || exit 0
+          git pull --rebase origin agent/pc-v1.2-preview18-smooth-smart-slots || true
+          git push origin HEAD:agent/pc-v1.2-preview18-smooth-smart-slots

@@ -1,0 +1,173 @@
+name: Build Rizwan Media Saver PC v1.2 Preview 16
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "agent/pc-v1.2-preview16-autoqueue-card-controls" ]
+    paths:
+      - ".github/workflows/build-desktop-pc-v120-preview16-release.yml"
+      - "desktop-app/tools/apply_v120_preview16_autoqueue_card_controls.py"
+      - "desktop-app/tools/fix_preview15_regex_replacement.py"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Preview 16 Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview16-autoqueue-card-controls
+
+      - name: Guard Preview 15 regex replacements
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview15_regex_replacement.py
+
+      - name: Apply PC patch chain through Preview 16
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $scripts = @(
+            "desktop-app/tools/apply_v111_navigation_fix.py",
+            "desktop-app/tools/apply_v112_rich_audio.py",
+            "desktop-app/tools/apply_v113_webview_session_bridge.py",
+            "desktop-app/tools/apply_v113_escape_fix.py",
+            "desktop-app/tools/apply_v120_smart_quality.py",
+            "desktop-app/tools/fix_preview2_navigation_anchor_v2.py",
+            "desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py",
+            "desktop-app/tools/apply_v120_preview3_fast_analysis.py",
+            "desktop-app/tools/fix_preview4_navigation_anchor.py",
+            "desktop-app/tools/apply_v120_preview4_channel_queue_ui.py",
+            "desktop-app/tools/apply_v120_preview5_channel_selector_fix.py",
+            "desktop-app/tools/apply_v120_preview6_runtime_channel_injection.py",
+            "desktop-app/tools/apply_v120_preview7_scroll_folders.py",
+            "desktop-app/tools/apply_v120_preview8_per_card_selector.py",
+            "desktop-app/tools/apply_v120_preview9_fast_visible_selector.py",
+            "desktop-app/tools/fix_preview10_patch_anchor.py",
+            "desktop-app/tools/apply_v120_preview10_event_driven_selector.py",
+            "desktop-app/tools/fix_preview10_document_start_root.py",
+            "desktop-app/tools/apply_v120_preview11_named_folder_output.py",
+            "desktop-app/tools/apply_v120_preview11_hotfix1_original_audio.py",
+            "desktop-app/tools/apply_v120_preview12_download_manager_ui.py",
+            "desktop-app/tools/apply_v120_preview12_hotfix2_ui_stability_recovery.py",
+            "desktop-app/tools/apply_v120_preview13_pause_resume.py",
+            "desktop-app/tools/apply_v120_preview14_queue_first_ux.py",
+            "desktop-app/tools/apply_v120_preview15_watch_multi.py",
+            "desktop-app/tools/apply_v120_preview16_autoqueue_card_controls.py"
+          )
+          foreach ($script in $scripts) {
+            Write-Host "Applying $script"
+            python $script
+            if ($LASTEXITCODE -ne 0) { throw "Patch failed: $script" }
+          }
+
+      - name: Verify Preview 16 and preserved layers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = Get-Content "desktop-app/BrowserMainForm.cs" -Raw
+          if ($src -notmatch '__rmsChannelSelectorInstalledV10') { throw "Preview 10 selector missing" }
+          if ($src -notmatch '__rmsWatchDownloadInstalledV15') { throw "Preview 15 watch action missing" }
+          if ($src -notmatch 'QueueChannelItemForScheduler') { throw "Preview 16 channel auto queue missing" }
+          if ($src -notmatch 'ToggleConcurrentQueuePauseResume') { throw "Preview 16 per-card pause missing" }
+          if ($src -notmatch 'CancelConcurrentQueueItem') { throw "Preview 16 per-card cancel missing" }
+          if ($src -notmatch '✓ Completed') { throw "Preview 16 completed tick missing" }
+          if ($src -notmatch 'MaxConcurrentDownloads') { throw "Concurrency setting missing" }
+          if ($src -notmatch 'outputTemplate = Path.Combine\(targetFolder') { throw "Preview 11 folder fix missing" }
+          if ($src -notmatch 'audioId = isOriginalAudio \? null') { throw "Hotfix 1 original audio fix missing" }
+          if ($src -notmatch 'managerLayoutKey == nextLayoutKey') { throw "Stable manager missing" }
+          Write-Host "Preview 16 verified."
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Download engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "desktop-app/tools" | Out-Null
+          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -o "desktop-app/tools/yt-dlp.exe"
+          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -o "$env:RUNNER_TEMP/deno.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/deno.zip" -DestinationPath "$env:RUNNER_TEMP/deno" -Force
+          Copy-Item "$env:RUNNER_TEMP/deno/deno.exe" "desktop-app/tools/deno.exe" -Force
+          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -o "$env:RUNNER_TEMP/ffmpeg.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/ffmpeg.zip" -DestinationPath "$env:RUNNER_TEMP/ffmpeg" -Force
+          $ffmpeg = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg) { throw "ffmpeg.exe not found" }
+          Copy-Item $ffmpeg.FullName "desktop-app/tools/ffmpeg.exe" -Force
+          if ($ffprobe) { Copy-Item $ffprobe.FullName "desktop-app/tools/ffprobe.exe" -Force }
+
+      - name: Publish Win64 GUI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
+          dotnet publish "desktop-app/RizwanMediaSaverPC.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "desktop-app/publish"
+          New-Item -ItemType Directory -Force -Path "desktop-app/publish/tools" | Out-Null
+          Copy-Item "desktop-app/tools/*" "desktop-app/publish/tools/" -Force
+          Copy-Item "desktop-app/THIRD-PARTY-NOTICES.txt" "desktop-app/publish/THIRD-PARTY-NOTICES.txt" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Preview 16 Setup EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "desktop-artifacts" | Out-Null
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc "desktop-app/installer.iss"
+          $setup = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview16-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "Preview 16 Setup EXE was not created" }
+          Get-FileHash $setup -Algorithm SHA256 | Format-List | Out-File "desktop-artifacts/SHA256.txt"
+
+      - name: Publish private prerelease asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "pc-v1.2-preview16-autoqueue-card-controls"
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          gh release create $tag --title "Rizwan Media Saver PC v1.2 Preview 16" --notes "Channel selections auto-start through the unified queue scheduler. Each active queued download has its own Pause/Resume and Cancel controls, and completed cards show a clear check mark. Normal single-video downloads also use the scheduler so 1/2/3 concurrency works consistently." --prerelease
+          gh release upload $tag "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview16-Setup.exe" "desktop-artifacts/SHA256.txt" --clobber
+
+      - name: Record build success marker
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = "ALishafaqat123/Rizwan-YT-Native"
+          $tag = "pc-v1.2-preview16-autoqueue-card-controls"
+          $assetName = "Rizwan-Media-Saver-PC-v1.2.0-Preview16-Setup.exe"
+          $release = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+          if (-not $asset) { throw "Preview 16 asset not found" }
+          $headers = Join-Path $env:RUNNER_TEMP "p16-headers.txt"
+          curl.exe -sS -D $headers -o NUL -H "Authorization: Bearer $env:GH_TOKEN" -H "Accept: application/octet-stream" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$repo/releases/assets/$($asset.id)"
+          $locationLine = Get-Content $headers | Where-Object { $_ -match '^location:' } | Select-Object -First 1
+          if (-not $locationLine) { throw "Signed asset redirect missing" }
+          $location = ($locationLine -replace '^location:\s*','').Trim()
+          $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($location))
+          $hashLine = (Get-FileHash "desktop-artifacts/$assetName" -Algorithm SHA256).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Force -Path ".build-status" | Out-Null
+          @(
+            "SUCCESS",
+            "asset_id=$($asset.id)",
+            "size=$($asset.size)",
+            "sha256=$hashLine",
+            "signed_url_b64=$b64"
+          ) | Set-Content ".build-status/preview16.txt" -Encoding UTF8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ".build-status/preview16.txt"
+          git commit -m "Record Preview 16 build success" || exit 0
+          git push origin HEAD:agent/pc-v1.2-preview16-autoqueue-card-controls

@@ -19,8 +19,6 @@ if old not in s:
 s = s.replace(old, new, 1)
 
 # Navigation must never re-show the old tray.
-s = s.replace('            downloadTray.Visible = false;\n            return;\n',
-              '            downloadTray.Visible = false;\n            return;\n', 1)
 old = '''        currentMediaUrl = url;\n        downloadTray.Visible = true;\n        downloadTray.BringToFront();\n        mediaTitle.Text = "Video detected";\n'''
 new = '''        currentMediaUrl = url;\n        downloadTray.Visible = false;\n        mediaTitle.Text = "Video detected";\n'''
 if old not in s:
@@ -41,13 +39,10 @@ s = s.replace('                    var rightWidth = 118;\n', '                  
 # Completed state: make the check an enabled visual indicator (not disabled/dim),
 # and add a folder icon next to it that opens the exact output folder.
 old = '''                    if (IsManagerCompleted(item.Status))\n                    {\n                        var done = MakeCardIconButton("✓", Accent);\n                        done.Enabled = false;\n                        card.Controls.Add(done);\n                    }\n'''
-new = '''                    if (IsManagerCompleted(item.Status))\n                    {\n                        var done = MakeCardIconButton("✓", Accent);\n                        done.Left = width - 64;\n                        done.Enabled = true;\n                        done.Cursor = Cursors.Default;\n                        done.AccessibleName = "Download completed";\n                        done.TabStop = false;\n                        // Keep it visually bright but inert.\n                        done.Click += (_, _) => { };\n                        card.Controls.Add(done);\n\n                        if (!string.IsNullOrWhiteSpace(item.OutputFolder))\n                        {\n                            var openDoneFolder = MakeCardIconButton("▣", Color.FromArgb(255, 152, 0));\n                            openDoneFolder.Left = width - 118;\n                            openDoneFolder.Font = new Font("Segoe UI Symbol", 15F, FontStyle.Bold);\n                            openDoneFolder.AccessibleName = "Open containing folder";\n                            openDoneFolder.Tag = "OpenFolder";\n                            var completedFolder = item.OutputFolder;\n                            openDoneFolder.Click += (_, _) => OpenManagerFolder(completedFolder);\n                            card.Controls.Add(openDoneFolder);\n                        }\n                    }\n'''
+new = '''                    if (IsManagerCompleted(item.Status))\n                    {\n                        var done = MakeCardIconButton("✓", Accent);\n                        done.Left = width - 64;\n                        done.Enabled = true;\n                        done.Cursor = Cursors.Default;\n                        done.AccessibleName = "Download completed";\n                        done.TabStop = false;\n                        done.Click += (_, _) => { };\n                        card.Controls.Add(done);\n\n                        if (!string.IsNullOrWhiteSpace(item.OutputFolder))\n                        {\n                            var openDoneFolder = MakeCardIconButton("📂", Color.FromArgb(255, 152, 0));\n                            openDoneFolder.Left = width - 118;\n                            openDoneFolder.Font = new Font("Segoe UI Emoji", 13F, FontStyle.Regular);\n                            openDoneFolder.AccessibleName = "Open containing folder";\n                            openDoneFolder.Tag = "OpenFolder";\n                            var completedFolder = item.OutputFolder;\n                            openDoneFolder.Click += (_, _) => OpenManagerFolder(completedFolder);\n                            card.Controls.Add(openDoneFolder);\n                        }\n                    }\n'''
 if old not in s:
     raise SystemExit('P19 completed action anchor not found')
 s = s.replace(old, new, 1)
-
-# Keep in-place card updates from treating the new folder icon as pause/resume.
-# No structural rebuild is needed for completed cards beyond the existing done shape.
 
 # Identity / installer.
 s = s.replace('Text = "PC v1.2 Preview 18",', 'Text = "PC v1.2 Preview 19",', 1)
@@ -66,6 +61,7 @@ check = p.read_text(encoding='utf-8')
 required = [
     'downloadTray.Height = 0;',
     'openDoneFolder.AccessibleName = "Open containing folder"',
+    'MakeCardIconButton("📂"',
     'done.Enabled = true;',
     'MakeCardIconButton("✓", Accent)',
     'concurrentQueueResumeRequested',

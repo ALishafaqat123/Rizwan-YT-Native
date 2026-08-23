@@ -1,38 +1,96 @@
-name: Temporary Preview 19 Signed URL Export
+name: Build Rizwan Media Saver APK
 
 on:
-  issues:
-    types: [opened]
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
-  export:
-    if: github.event.issue.title == 'Preview19 Signed URL'
+  build:
+    name: Assemble verified release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      GH_TOKEN: ${{ github.token }}
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    timeout-minutes: 30
+
     steps:
-      - name: Export signed asset URL as base64
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build unsigned release APK
+        shell: bash
+        run: gradle --no-daemon --stacktrace clean assembleRelease
+
+      - name: Align and explicitly sign APK with v1 and v2
         shell: bash
         run: |
           set -euo pipefail
-          ASSET_ID=526216375
-          HDR=$(mktemp)
-          curl -sS -D "$HDR" -o /dev/null \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/octet-stream" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/ALishafaqat123/Rizwan-YT-Native/releases/assets/$ASSET_ID"
-          LOCATION=$(tr -d '\r' < "$HDR" | awk 'BEGIN{IGNORECASE=1} /^location: /{sub(/^location: /,""); print; exit}')
-          if [ -z "$LOCATION" ]; then
-            echo "No signed Location header" >&2
-            cat "$HDR" >&2
-            exit 1
-          fi
-          B64=$(printf '%s' "$LOCATION" | base64 -w0)
-          gh issue comment "$ISSUE_NUMBER" --repo ALishafaqat123/Rizwan-YT-Native --body "SIGNED_URL_B64=$B64"
+          mkdir -p artifacts
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-v1.8.2-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-v1.8.2-progress-polish.apk"
+          test -f "$UNSIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks app/rizwan-test-signing.keystore \
+            --ks-key-alias rizwan_test \
+            --ks-pass pass:RizwanTest2026 \
+            --key-pass pass:RizwanTest2026 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled false \
+            --out "$FINAL" \
+            "$ALIGNED"
+          rm -f "$ALIGNED"
+
+      - name: Verify APK signature, alignment and Android metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="artifacts/Rizwan-Media-Saver-v1.8.2-progress-polish.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
+
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-ANDROID8.txt
+
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 23 "$APK" | tee artifacts/SIGNATURE-V1-COMPAT.txt
+          grep -q "Verified using v1 scheme (JAR signing): true" artifacts/SIGNATURE-V1-COMPAT.txt
+          jarsigner -verify -certs "$APK" | tee artifacts/JARSIGNER-VERIFICATION.txt
+          grep -q "jar verified" artifacts/JARSIGNER-VERIFICATION.txt
+
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
+          grep -q "package: name='com.rizwan.ytnative'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='182'" artifacts/APK-BADGING.txt
+          grep -q "versionName='1.8.2-progress-polish'" artifacts/APK-BADGING.txt
+          grep -q "application-label:'Rizwan Media Saver'" artifacts/APK-BADGING.txt
+          grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
+          sha256sum "$APK" | tee artifacts/SHA256.txt
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rizwan-Media-Saver-v1.8.2-Progress-Polish-Verified-APK
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14

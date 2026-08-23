@@ -1,126 +1,96 @@
-name: Temporary Preview 19 Scheduled Windows Build
+name: Build Rizwan Media Saver APK
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    runs-on: windows-latest
-    timeout-minutes: 45
+    name: Assemble verified release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          ref: agent/pc-v1.2-preview19-clear-completed-compact-watch
+          distribution: temurin
+          java-version: "17"
 
-      - name: Apply patch chain
-        shell: pwsh
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
-          python desktop-app/tools/fix_preview15_regex_replacement.py
-          $scripts = @(
-            "desktop-app/tools/apply_v111_navigation_fix.py",
-            "desktop-app/tools/apply_v112_rich_audio.py",
-            "desktop-app/tools/apply_v113_webview_session_bridge.py",
-            "desktop-app/tools/apply_v113_escape_fix.py",
-            "desktop-app/tools/apply_v120_smart_quality.py",
-            "desktop-app/tools/fix_preview2_navigation_anchor_v2.py",
-            "desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py",
-            "desktop-app/tools/apply_v120_preview3_fast_analysis.py",
-            "desktop-app/tools/fix_preview4_navigation_anchor.py",
-            "desktop-app/tools/apply_v120_preview4_channel_queue_ui.py",
-            "desktop-app/tools/apply_v120_preview5_channel_selector_fix.py",
-            "desktop-app/tools/apply_v120_preview6_runtime_channel_injection.py",
-            "desktop-app/tools/apply_v120_preview7_scroll_folders.py",
-            "desktop-app/tools/apply_v120_preview8_per_card_selector.py",
-            "desktop-app/tools/apply_v120_preview9_fast_visible_selector.py",
-            "desktop-app/tools/fix_preview10_patch_anchor.py",
-            "desktop-app/tools/apply_v120_preview10_event_driven_selector.py",
-            "desktop-app/tools/fix_preview10_document_start_root.py",
-            "desktop-app/tools/apply_v120_preview11_named_folder_output.py",
-            "desktop-app/tools/apply_v120_preview11_hotfix1_original_audio.py",
-            "desktop-app/tools/apply_v120_preview12_download_manager_ui.py",
-            "desktop-app/tools/apply_v120_preview12_hotfix2_ui_stability_recovery.py",
-            "desktop-app/tools/apply_v120_preview13_pause_resume.py",
-            "desktop-app/tools/apply_v120_preview14_queue_first_ux.py",
-            "desktop-app/tools/apply_v120_preview15_watch_multi.py",
-            "desktop-app/tools/apply_v120_preview16_autoqueue_card_controls.py",
-            "desktop-app/tools/apply_v120_preview17_clean_downloads_ui.py",
-            "desktop-app/tools/apply_v120_preview18_smooth_smart_slots.py",
-            "desktop-app/tools/apply_v120_preview19_clear_completed_compact_watch.py"
-          )
-          foreach ($script in $scripts) {
-            Write-Host "Applying $script"
-            python $script
-            if ($LASTEXITCODE -ne 0) { throw "Patch failed: $script" }
-          }
-          $src = Get-Content "desktop-app/BrowserMainForm.cs" -Raw
-          if ($src -notmatch 'downloadTray.Height = 0;') { throw "Large watch tray not hidden" }
-          if ($src -notmatch 'MakeCardIconButton\("📂"') { throw "Folder icon missing" }
-          if ($src -notmatch 'Open containing folder') { throw "Folder action missing" }
-          if ($src -notmatch 'done.Enabled = true;') { throw "Bright completed check missing" }
-          if ($src -notmatch 'TryStartWaitingResumes') { throw "Preview 18 smart slots missing" }
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - uses: actions/setup-dotnet@v4
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
         with:
-          dotnet-version: "8.0.x"
+          gradle-version: "8.9"
 
-      - name: Download engines
-        shell: pwsh
+      - name: Build unsigned release APK
+        shell: bash
+        run: gradle --no-daemon --stacktrace clean assembleRelease
+
+      - name: Align and explicitly sign APK with v1 and v2
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
-          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -o "desktop-app/tools/yt-dlp.exe"
-          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -o "$env:RUNNER_TEMP/deno.zip"
-          Expand-Archive "$env:RUNNER_TEMP/deno.zip" "$env:RUNNER_TEMP/deno" -Force
-          Copy-Item "$env:RUNNER_TEMP/deno/deno.exe" "desktop-app/tools/deno.exe" -Force
-          curl.exe -L --fail --retry 5 --retry-all-errors "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -o "$env:RUNNER_TEMP/ffmpeg.zip"
-          Expand-Archive "$env:RUNNER_TEMP/ffmpeg.zip" "$env:RUNNER_TEMP/ffmpeg" -Force
-          $ffmpeg = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          $ffprobe = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffprobe.exe | Select-Object -First 1
-          if (-not $ffmpeg) { throw "ffmpeg.exe not found" }
-          Copy-Item $ffmpeg.FullName "desktop-app/tools/ffmpeg.exe" -Force
-          if ($ffprobe) { Copy-Item $ffprobe.FullName "desktop-app/tools/ffprobe.exe" -Force }
+          set -euo pipefail
+          mkdir -p artifacts
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          ALIGNED="artifacts/Rizwan-Media-Saver-v1.8.2-aligned-unsigned.apk"
+          FINAL="artifacts/Rizwan-Media-Saver-v1.8.2-progress-polish.apk"
+          test -f "$UNSIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks app/rizwan-test-signing.keystore \
+            --ks-key-alias rizwan_test \
+            --ks-pass pass:RizwanTest2026 \
+            --key-pass pass:RizwanTest2026 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled false \
+            --out "$FINAL" \
+            "$ALIGNED"
+          rm -f "$ALIGNED"
 
-      - name: Publish Windows app
-        shell: pwsh
+      - name: Verify APK signature, alignment and Android metadata
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
-          dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
-          dotnet publish "desktop-app/RizwanMediaSaverPC.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "desktop-app/publish"
-          New-Item -ItemType Directory -Force "desktop-app/publish/tools" | Out-Null
-          Copy-Item "desktop-app/tools/*" "desktop-app/publish/tools/" -Force
-          Copy-Item "desktop-app/THIRD-PARTY-NOTICES.txt" "desktop-app/publish/THIRD-PARTY-NOTICES.txt" -Force
+          set -euo pipefail
+          APK="artifacts/Rizwan-Media-Saver-v1.8.2-progress-polish.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup -y --no-progress
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 24 "$APK" | tee artifacts/SIGNATURE-ANDROID8.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" artifacts/SIGNATURE-ANDROID8.txt
 
-      - name: Build installer and private prerelease
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Force "desktop-artifacts" | Out-Null
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "desktop-app/installer.iss"
-          $file = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview19-Setup.exe"
-          if (-not (Test-Path $file)) { throw "Preview19 setup missing" }
-          $sha = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
-          $tag = "pc-v1.2-preview19-clear-completed-compact-watch"
-          gh release delete $tag --yes --cleanup-tag 2>$null
-          gh release create $tag --title "Rizwan Media Saver PC v1.2 Preview 19" --notes "Bright completed check + per-file folder icon + hidden large watch tray. Preview 18 smart slots preserved." --prerelease
-          gh release upload $tag $file --clobber
-          $rel = gh api "repos/ALishafaqat123/Rizwan-YT-Native/releases/tags/$tag" | ConvertFrom-Json
-          $asset = $rel.assets | Where-Object { $_.name -eq "Rizwan-Media-Saver-PC-v1.2.0-Preview19-Setup.exe" } | Select-Object -First 1
-          if (-not $asset) { throw "Preview19 release asset missing" }
-          New-Item -ItemType Directory -Force ".build-status" | Out-Null
-          @("SUCCESS","asset_id=$($asset.id)","size=$($asset.size)","sha256=$sha") | Set-Content ".build-status/preview19-scheduled-build.txt" -Encoding UTF8
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ".build-status/preview19-scheduled-build.txt"
-          git commit -m "Record Preview 19 scheduled build success" || exit 0
-          git push origin HEAD:agent/pc-v1.2-preview19-clear-completed-compact-watch
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs --min-sdk-version 23 "$APK" | tee artifacts/SIGNATURE-V1-COMPAT.txt
+          grep -q "Verified using v1 scheme (JAR signing): true" artifacts/SIGNATURE-V1-COMPAT.txt
+          jarsigner -verify -certs "$APK" | tee artifacts/JARSIGNER-VERIFICATION.txt
+          grep -q "jar verified" artifacts/JARSIGNER-VERIFICATION.txt
+
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -20 | tee artifacts/APK-BADGING.txt
+          grep -q "package: name='com.rizwan.ytnative'" artifacts/APK-BADGING.txt
+          grep -q "versionCode='182'" artifacts/APK-BADGING.txt
+          grep -q "versionName='1.8.2-progress-polish'" artifacts/APK-BADGING.txt
+          grep -q "application-label:'Rizwan Media Saver'" artifacts/APK-BADGING.txt
+          grep -q "sdkVersion:'24'" artifacts/APK-BADGING.txt
+          sha256sum "$APK" | tee artifacts/SHA256.txt
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rizwan-Media-Saver-v1.8.2-Progress-Polish-Verified-APK
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14

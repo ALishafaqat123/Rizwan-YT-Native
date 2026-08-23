@@ -1,3 +1,3 @@
-NOT_READY
-release_exists=yes
-asset_exists=no
+SUCCESS
+asset_id=525966114
+size=168203785

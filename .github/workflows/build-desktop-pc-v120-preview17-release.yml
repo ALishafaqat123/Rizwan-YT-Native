@@ -170,3 +170,5 @@ jobs:
           git add ".build-status/preview17.txt"
           git commit -m "Record Preview 17 build success" || exit 0
           git push origin HEAD:agent/pc-v1.2-preview17-clean-downloads-ui
+
+# build trigger

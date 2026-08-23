@@ -62,3 +62,5 @@ jobs:
           git commit -m "Record Preview 18 signed export" || exit 0
           git pull --rebase origin agent/pc-v1.2-preview18-smooth-smart-slots || true
           git push origin HEAD:agent/pc-v1.2-preview18-smooth-smart-slots
+
+# trigger registered export workflow

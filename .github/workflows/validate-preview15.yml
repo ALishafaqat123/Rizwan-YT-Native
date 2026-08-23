@@ -1,0 +1,85 @@
+name: Validate Preview 15
+
+on:
+  push:
+    branches: [ "agent/pc-v1.2-preview15-watch-multi" ]
+    paths:
+      - ".github/workflows/validate-preview15.yml"
+      - "desktop-app/tools/apply_v120_preview15_watch_multi.py"
+      - "desktop-app/tools/fix_preview15_regex_replacement.py"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview15-watch-multi
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Apply chain and compile
+        id: check
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          python desktop-app/tools/fix_preview15_regex_replacement.py
+          $scripts = @(
+            "desktop-app/tools/apply_v111_navigation_fix.py",
+            "desktop-app/tools/apply_v112_rich_audio.py",
+            "desktop-app/tools/apply_v113_webview_session_bridge.py",
+            "desktop-app/tools/apply_v113_escape_fix.py",
+            "desktop-app/tools/apply_v120_smart_quality.py",
+            "desktop-app/tools/fix_preview2_navigation_anchor_v2.py",
+            "desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py",
+            "desktop-app/tools/apply_v120_preview3_fast_analysis.py",
+            "desktop-app/tools/fix_preview4_navigation_anchor.py",
+            "desktop-app/tools/apply_v120_preview4_channel_queue_ui.py",
+            "desktop-app/tools/apply_v120_preview5_channel_selector_fix.py",
+            "desktop-app/tools/apply_v120_preview6_runtime_channel_injection.py",
+            "desktop-app/tools/apply_v120_preview7_scroll_folders.py",
+            "desktop-app/tools/apply_v120_preview8_per_card_selector.py",
+            "desktop-app/tools/apply_v120_preview9_fast_visible_selector.py",
+            "desktop-app/tools/fix_preview10_patch_anchor.py",
+            "desktop-app/tools/apply_v120_preview10_event_driven_selector.py",
+            "desktop-app/tools/fix_preview10_document_start_root.py",
+            "desktop-app/tools/apply_v120_preview11_named_folder_output.py",
+            "desktop-app/tools/apply_v120_preview11_hotfix1_original_audio.py",
+            "desktop-app/tools/apply_v120_preview12_download_manager_ui.py",
+            "desktop-app/tools/apply_v120_preview12_hotfix2_ui_stability_recovery.py",
+            "desktop-app/tools/apply_v120_preview13_pause_resume.py",
+            "desktop-app/tools/apply_v120_preview14_queue_first_ux.py",
+            "desktop-app/tools/apply_v120_preview15_watch_multi.py"
+          )
+          $ok = $true
+          $why = ""
+          foreach ($script in $scripts) {
+            "Applying $script" | Tee-Object -FilePath "$env:RUNNER_TEMP/p15-validation.log" -Append
+            python $script 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/p15-validation.log" -Append
+            if ($LASTEXITCODE -ne 0) { $ok = $false; $why = "Patch failed: $script"; break }
+          }
+          if ($ok) {
+            dotnet build "desktop-app/RizwanMediaSaverPC.csproj" -c Release 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/p15-validation.log" -Append
+            if ($LASTEXITCODE -ne 0) { $ok = $false; $why = "C# compile failed" }
+          }
+          New-Item -ItemType Directory -Force -Path ".build-status" | Out-Null
+          if ($ok) { "SUCCESS" | Set-Content ".build-status/preview15-validation.txt" -Encoding UTF8 }
+          else { @("FAIL", $why, "--- tail ---", (Get-Content "$env:RUNNER_TEMP/p15-validation.log" -Tail 80)) | Set-Content ".build-status/preview15-validation.txt" -Encoding UTF8 }
+          if (-not $ok) { exit 1 }
+
+      - name: Record validation result
+        if: always()
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ".build-status/preview15-validation.txt"
+          git commit -m "Record Preview 15 validation" || exit 0
+          git push origin HEAD:agent/pc-v1.2-preview15-watch-multi

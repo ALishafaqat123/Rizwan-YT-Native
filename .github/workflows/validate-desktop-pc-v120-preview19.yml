@@ -1,0 +1,100 @@
+name: Validate Rizwan Media Saver PC Preview 19
+
+on:
+  push:
+    branches: [ "agent/pc-v1.2-preview19-clear-completed-compact-watch" ]
+    paths:
+      - ".github/workflows/validate-desktop-pc-v120-preview19.yml"
+      - "desktop-app/tools/apply_v120_preview19_clear_completed_compact_watch.py"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview19-clear-completed-compact-watch
+
+      - name: Guard Preview 15 regex replacements
+        shell: pwsh
+        run: python desktop-app/tools/fix_preview15_regex_replacement.py
+
+      - name: Apply patch chain through Preview 19
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $scripts = @(
+            "desktop-app/tools/apply_v111_navigation_fix.py",
+            "desktop-app/tools/apply_v112_rich_audio.py",
+            "desktop-app/tools/apply_v113_webview_session_bridge.py",
+            "desktop-app/tools/apply_v113_escape_fix.py",
+            "desktop-app/tools/apply_v120_smart_quality.py",
+            "desktop-app/tools/fix_preview2_navigation_anchor_v2.py",
+            "desktop-app/tools/apply_v120_preview2_playlist_ui_settings.py",
+            "desktop-app/tools/apply_v120_preview3_fast_analysis.py",
+            "desktop-app/tools/fix_preview4_navigation_anchor.py",
+            "desktop-app/tools/apply_v120_preview4_channel_queue_ui.py",
+            "desktop-app/tools/apply_v120_preview5_channel_selector_fix.py",
+            "desktop-app/tools/apply_v120_preview6_runtime_channel_injection.py",
+            "desktop-app/tools/apply_v120_preview7_scroll_folders.py",
+            "desktop-app/tools/apply_v120_preview8_per_card_selector.py",
+            "desktop-app/tools/apply_v120_preview9_fast_visible_selector.py",
+            "desktop-app/tools/fix_preview10_patch_anchor.py",
+            "desktop-app/tools/apply_v120_preview10_event_driven_selector.py",
+            "desktop-app/tools/fix_preview10_document_start_root.py",
+            "desktop-app/tools/apply_v120_preview11_named_folder_output.py",
+            "desktop-app/tools/apply_v120_preview11_hotfix1_original_audio.py",
+            "desktop-app/tools/apply_v120_preview12_download_manager_ui.py",
+            "desktop-app/tools/apply_v120_preview12_hotfix2_ui_stability_recovery.py",
+            "desktop-app/tools/apply_v120_preview13_pause_resume.py",
+            "desktop-app/tools/apply_v120_preview14_queue_first_ux.py",
+            "desktop-app/tools/apply_v120_preview15_watch_multi.py",
+            "desktop-app/tools/apply_v120_preview16_autoqueue_card_controls.py",
+            "desktop-app/tools/apply_v120_preview17_clean_downloads_ui.py",
+            "desktop-app/tools/apply_v120_preview18_smooth_smart_slots.py",
+            "desktop-app/tools/apply_v120_preview19_clear_completed_compact_watch.py"
+          )
+          foreach ($script in $scripts) {
+            Write-Host "Applying $script"
+            python $script
+            if ($LASTEXITCODE -ne 0) { throw "Patch failed: $script" }
+          }
+
+      - name: Verify Preview 19 markers
+        shell: pwsh
+        run: |
+          $src = Get-Content "desktop-app/BrowserMainForm.cs" -Raw
+          if ($src -notmatch 'downloadTray.Height = 0;') { throw "Large watch tray is not hidden" }
+          if ($src -notmatch 'MakeCardIconButton\("📂"') { throw "Completed folder icon missing" }
+          if ($src -notmatch 'Open containing folder') { throw "Completed folder action missing" }
+          if ($src -notmatch 'done.Enabled = true;') { throw "Bright completed check missing" }
+          if ($src -notmatch 'concurrentQueueResumeRequested') { throw "Preview 18 smart slots missing" }
+          if ($src -notmatch 'TryStartWaitingResumes') { throw "Preview 18 waiting resume missing" }
+          if ($src -notmatch 'MakeDownloadTab\("Downloading"') { throw "Clean UI missing" }
+          if ($src -notmatch '__rmsWatchDownloadInstalledV15') { throw "Small watch-page button missing" }
+          if ($src -notmatch '__rmsChannelSelectorInstalledV10') { throw "Channel selector missing" }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore and compile
+        shell: pwsh
+        run: |
+          dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
+          dotnet build "desktop-app/RizwanMediaSaverPC.csproj" -c Release --no-restore
+
+      - name: Record validation success
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ".build-status" | Out-Null
+          "SUCCESS" | Set-Content ".build-status/preview19-validation.txt" -Encoding UTF8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ".build-status/preview19-validation.txt"
+          git commit -m "Record Preview 19 validation success" || exit 0
+          git push origin HEAD:agent/pc-v1.2-preview19-clear-completed-compact-watch

@@ -14,6 +14,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
+      - name: Mark build started
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment ${{ github.event.issue.number }} --repo ALishafaqat123/Rizwan-YT-Native --body "Preview 19 Windows build started."
+
       - uses: actions/checkout@v4
         with:
           ref: agent/pc-v1.2-preview19-clear-completed-compact-watch
@@ -125,3 +131,4 @@ jobs:
           git add ".build-status/preview19-issue-build.txt"
           git commit -m "Record Preview 19 issue build success" || exit 0
           git push origin HEAD:agent/pc-v1.2-preview19-clear-completed-compact-watch
+          gh issue comment ${{ github.event.issue.number }} --repo ALishafaqat123/Rizwan-YT-Native --body "Preview 19 Windows build completed successfully."

@@ -95,3 +95,5 @@ jobs:
           git add ".build-status/preview17-validation.txt"
           git commit -m "Record Preview 17 validation success" || exit 0
           git push origin HEAD:agent/pc-v1.2-preview17-clean-downloads-ui
+
+# validation trigger

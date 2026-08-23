@@ -175,3 +175,5 @@ jobs:
           git add ".build-status/preview18.txt"
           git commit -m "Record Preview 18 build success" || exit 0
           git push origin HEAD:agent/pc-v1.2-preview18-smooth-smart-slots
+
+# trigger registered workflow

@@ -1,11 +1,13 @@
-name: Temporary Preview 19 Windows Build
+name: Temporary Preview 19 PR Windows Build
 
 on:
-  push:
+  pull_request:
     branches: [ "main" ]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   build:
@@ -58,11 +60,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Patch failed: $script" }
           }
           $src = Get-Content "desktop-app/BrowserMainForm.cs" -Raw
-          if ($src -notmatch 'downloadTray.Height = 0;') { throw "Large tray not hidden" }
+          if ($src -notmatch 'downloadTray.Height = 0;') { throw "Large watch tray not hidden" }
           if ($src -notmatch 'MakeCardIconButton\("📂"') { throw "Folder icon missing" }
           if ($src -notmatch 'Open containing folder') { throw "Folder action missing" }
-          if ($src -notmatch 'done.Enabled = true;') { throw "Completed check missing" }
-          if ($src -notmatch 'TryStartWaitingResumes') { throw "Preview18 smart slots missing" }
+          if ($src -notmatch 'done.Enabled = true;') { throw "Bright completed check missing" }
+          if ($src -notmatch 'TryStartWaitingResumes') { throw "Preview 18 smart slots missing" }
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -87,6 +89,7 @@ jobs:
       - name: Publish Windows app
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           dotnet restore "desktop-app/RizwanMediaSaverPC.csproj"
           dotnet publish "desktop-app/RizwanMediaSaverPC.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "desktop-app/publish"
           New-Item -ItemType Directory -Force "desktop-app/publish/tools" | Out-Null
@@ -97,27 +100,35 @@ jobs:
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
-      - name: Build installer and private release
+      - name: Build installer
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force "desktop-artifacts" | Out-Null
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "desktop-app/installer.iss"
           $file = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview19-Setup.exe"
           if (-not (Test-Path $file)) { throw "Preview19 setup missing" }
-          $sha = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          Get-FileHash $file -Algorithm SHA256 | Format-List | Out-File "desktop-artifacts/SHA256.txt"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rizwan-Media-Saver-PC-Preview19-Setup
+          path: |
+            desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview19-Setup.exe
+            desktop-artifacts/SHA256.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish private prerelease
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
           $tag = "pc-v1.2-preview19-clear-completed-compact-watch"
+          $file = "desktop-artifacts/Rizwan-Media-Saver-PC-v1.2.0-Preview19-Setup.exe"
           gh release delete $tag --yes --cleanup-tag 2>$null
-          gh release create $tag --title "Rizwan Media Saver PC v1.2 Preview 19" --notes "Bright completed check + per-file folder icon + compact watch-page UI. Preview18 smart slots preserved." --prerelease
-          gh release upload $tag $file --clobber
-          $rel = gh api "repos/ALishafaqat123/Rizwan-YT-Native/releases/tags/$tag" | ConvertFrom-Json
-          $asset = $rel.assets | Where-Object { $_.name -eq "Rizwan-Media-Saver-PC-v1.2.0-Preview19-Setup.exe" } | Select-Object -First 1
-          New-Item -ItemType Directory -Force ".build-status" | Out-Null
-          @("SUCCESS","asset_id=$($asset.id)","size=$($asset.size)","sha256=$sha") | Set-Content ".build-status/preview19-main-build.txt" -Encoding UTF8
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ".build-status/preview19-main-build.txt"
-          git commit -m "Record Preview 19 main build success" || exit 0
-          git push origin HEAD:agent/pc-v1.2-preview19-clear-completed-compact-watch
+          gh release create $tag --title "Rizwan Media Saver PC v1.2 Preview 19" --notes "Bright completed check, per-file folder icon, hidden large watch tray; Preview 18 smart slots preserved." --prerelease
+          gh release upload $tag $file "desktop-artifacts/SHA256.txt" --clobber

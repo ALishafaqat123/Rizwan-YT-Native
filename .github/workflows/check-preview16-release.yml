@@ -1,0 +1,45 @@
+name: Check Preview 16 Release
+
+on:
+  push:
+    branches: [ "agent/pc-v1.2-preview16-autoqueue-card-controls" ]
+    paths:
+      - ".github/workflows/check-preview16-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/pc-v1.2-preview16-autoqueue-card-controls
+      - name: Check release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          repo="ALishafaqat123/Rizwan-YT-Native"
+          tag="pc-v1.2-preview16-autoqueue-card-controls"
+          file="Rizwan-Media-Saver-PC-v1.2.0-Preview16-Setup.exe"
+          mkdir -p .build-status
+          release=$(gh api "repos/$repo/releases/tags/$tag" 2>/dev/null)
+          if [ $? -ne 0 ]; then
+            printf 'NOT_READY\nrelease_exists=no\n' > .build-status/preview16-release-check.txt
+          else
+            asset_id=$(printf '%s' "$release" | jq -r --arg f "$file" '.assets[]? | select(.name==$f) | .id' | head -n1)
+            size=$(printf '%s' "$release" | jq -r --arg f "$file" '.assets[]? | select(.name==$f) | .size' | head -n1)
+            if [ -n "$asset_id" ]; then
+              printf 'SUCCESS\nrelease_exists=yes\nasset_exists=yes\nasset_id=%s\nsize=%s\n' "$asset_id" "$size" > .build-status/preview16-release-check.txt
+            else
+              printf 'NOT_READY\nrelease_exists=yes\nasset_exists=no\n' > .build-status/preview16-release-check.txt
+            fi
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .build-status/preview16-release-check.txt
+          git commit -m "Record Preview 16 release check" || exit 0
+          git push origin HEAD:agent/pc-v1.2-preview16-autoqueue-card-controls

@@ -1,0 +1,5 @@
+SUCCESS
+release_exists=yes
+asset_exists=yes
+asset_id=525993051
+size=168211070
